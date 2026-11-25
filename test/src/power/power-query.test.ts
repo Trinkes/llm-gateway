@@ -297,6 +297,13 @@ describe("loadPowerData energy", () => {
     });
   });
 
+  it("keeps the rollup wall peak when raw rows have none", async () => {
+    await host(600, T0, 80, { wall: 150, wallSamples: 60, wallMax: 190 });
+    await host(10, T0 + 600, 40);
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0]).toMatchObject({ wallPeakW: 190, apuPeakW: 40 });
+  });
+
   it("dataStart is the first host row", async () => {
     await host(10, T0 + 30, 5);
     await host(600, T0 + 600, 5);

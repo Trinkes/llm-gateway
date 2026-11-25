@@ -1,5 +1,5 @@
 // [fork] W13: /api/power endpoints.
-import migration from "../../../migrations/0006_box_samples.sql?raw";
+import { createBoxTables } from "../live/box-schema";
 import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -67,13 +67,7 @@ beforeAll(async () => {
   for (const stmt of SCHEMA.split(";")) {
     if (stmt.trim()) await env.DB.exec(stmt.replace(/\s+/g, " ").trim());
   }
-  await env.DB.exec("DROP TABLE IF EXISTS host_samples");
-  await env.DB.exec(
-    migration
-      .split(";")
-      .map((s) => s.replace(/--.*$/gm, "").replace(/\s+/g, " ").trim())
-      .find((s) => s.startsWith("CREATE TABLE host_samples "))!,
-  );
+  await createBoxTables(env.DB, ["host_samples"]);
 });
 
 beforeEach(async () => {
@@ -138,7 +132,9 @@ describe("GET /api/power", () => {
     expect(body).toMatchObject({ from, to, tz: "UTC", dataStart: from });
     expect(body.totals.coverage).toBeGreaterThan(0.9);
     expect(body.totals.coverage).toBeLessThanOrEqual(1);
-    expect(body.totals.peakW).toBe(45);
+    // no plug data: APU peak 45 W through the overhead model (+10 W)
+    expect(body.totals.peakW).toBe(55);
+    expect(body.totals.source).toBe("apu");
     expect(body.totals.tokens.output).toBe(500);
     expect(body.totals.cloudUsd).toBeCloseTo((1000 * 1 + 500 * 4) / 1e6); // no cache tokens
     expect(body.totals.unpricedRequests).toBe(0);
@@ -154,6 +150,13 @@ describe("GET /api/power", () => {
     ]);
     expect(body.days).toHaveLength(utcDays(from, to));
     expect(body.projectionUsd).toBeGreaterThan(body.totals.electricityUsd);
+    expect(body.fallbackModel).toEqual({
+      kind: "setting",
+      k: 1,
+      c: 10,
+      pairs: 0,
+      windowDays: 7,
+    });
     expect(body.idleFloor).toEqual({
       watts: 30,
       monthlyUsd: ((30 * 730) / 1000) * 0.2,
@@ -245,6 +248,7 @@ describe("GET /api/power/months", () => {
     );
     expect(kwh).toBeCloseTo((20 * 6 * HOUR) / 3.6e6);
     expect(current.electricityUsd).not.toBeNull();
+    expect(body.fallbackModel.kind).toBe("setting");
   });
 
   it("count and tz", async () => {
