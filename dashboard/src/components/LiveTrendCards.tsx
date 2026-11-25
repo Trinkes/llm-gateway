@@ -1,4 +1,4 @@
-// [fork] The Live page's queue, inference and system-use charts.
+// [fork] The Live page's requests, inference and system-use charts.
 import type { LivePoint } from "../lib/liveSeries";
 import { LiveInferenceChart } from "./LiveInferenceChart";
 import { LiveQueueChart } from "./LiveQueueChart";
@@ -20,8 +20,8 @@ export function LiveTrendCards({
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <Card
-        title="Queue"
-        subtitle="Queued requests on the left · longest wait on the right"
+        title="Requests"
+        subtitle="Active and queued on the left · longest wait on the right"
       >
         {empty ?? <LiveQueueChart data={data} domain={domain} />}
       </Card>

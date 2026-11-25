@@ -189,7 +189,16 @@ describe("ratio", () => {
 
 describe("toPoint inference and memory", () => {
   it("queue, KV and memory shares come from the latest snapshot", () => {
-    const p = toPoint(null, snap(2000, { queued: 2, longestWaitS: 12.2, kvUsageRatio: 0.25 }));
+    const p = toPoint(
+      null,
+      snap(2000, {
+        inFlight: 3,
+        queued: 2,
+        longestWaitS: 12.2,
+        kvUsageRatio: 0.25,
+      }),
+    );
+    expect(p.activeRequests).toBe(3);
     expect(p.queued).toBe(2);
     expect(p.longestWaitS).toBe(12.2);
     expect(p.kvPct).toBe(25);
@@ -248,6 +257,7 @@ describe("toPoint inference and memory", () => {
 
   it("null sources give null fields", () => {
     const p = toPoint(snap(0, null, null), snap(2000, null, null));
+    expect(p.activeRequests).toBeNull();
     expect(p.queued).toBeNull();
     expect(p.kvPct).toBeNull();
     expect(p.ramPct).toBeNull();
