@@ -1,19 +1,7 @@
-// [fork] W12: CPU / GPU / SSD temperature and APU power on a real time axis.
+// [fork] W12: CPU / GPU / SSD temperature, APU and wall power on a real time axis.
 import type { LivePoint } from "../lib/liveSeries";
-import { LiveLineChart, type ChartLine } from "./LiveLineChart";
-
-const LINES: ChartLine<LivePoint>[] = [
-  { key: "cpuTempC", name: "CPU °C", color: "#ef4444" },
-  { key: "gpuTempC", name: "GPU °C", color: "#f59e0b" },
-  { key: "ssdTempC", name: "SSD °C", color: "#10b981" },
-  {
-    key: "gpuPowerW",
-    name: "APU W",
-    color: "#6366f1",
-    axis: "right",
-    dashed: true,
-  },
-];
+import { TEMP_LINES } from "../lib/liveTempLines";
+import { LiveLineChart } from "./LiveLineChart";
 
 export function LiveTempChart({
   data,
@@ -27,7 +15,7 @@ export function LiveTempChart({
     <LiveLineChart
       data={data}
       domain={domain}
-      lines={LINES}
+      lines={TEMP_LINES}
       left={{
         tick: (v) => `${Math.round(v)}°`,
         value: (v) => `${v.toFixed(1)} °C`,

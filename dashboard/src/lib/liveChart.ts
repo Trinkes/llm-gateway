@@ -221,6 +221,11 @@ export function fmtC(value: number | null): string {
   return value === null ? "—" : `${Math.round(value)} °C`;
 }
 
+/** [fork] W14: watts as "179 W", a dash for null. */
+export function fmtW(value: number | null): string {
+  return value === null ? "—" : `${Math.round(value)} W`;
+}
+
 /** A 0-100 value (already a percentage) as "42%". */
 export function fmtPctValue(value: number | null): string {
   return value === null ? "Unavailable" : pct(value / 100);

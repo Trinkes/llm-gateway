@@ -127,6 +127,8 @@ export interface RangeSummary {
   peakRamPct: number | null;
   peakCpuTempC: number | null;
   peakGpuTempC: number | null;
+  /** [fork] W14: highest wall-meter watts (bucket max when stored). */
+  peakWallW: number | null;
 }
 
 function mean(values: (number | null | undefined)[]): number | null {
@@ -205,5 +207,6 @@ export function summarize(h: LiveHistory): RangeSummary {
     peakRamPct: peakShareOf(host, "mem_in_use_bytes", "mem_total_bytes"),
     peakCpuTempC: peakOf(host, "cpu_temp_c"),
     peakGpuTempC: peakOf(host, "gpu_temp_c"),
+    peakWallW: peakOf(host, "wall_power_w"),
   };
 }
