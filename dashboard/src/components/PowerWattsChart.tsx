@@ -1,8 +1,10 @@
 // [fork] W13: APU watts over the Power page range, with the range average.
+// [fork] W14: wall-meter watts beside them; the gap is the non-APU draw.
 import { axisTick } from "../lib/liveChart";
 import type { HistoryPoint } from "../lib/liveHistory";
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ReferenceLine,
@@ -43,7 +45,17 @@ export function PowerWattsChart({
         <YAxis tick={{ fontSize: 11 }} unit="W" />
         <Tooltip
           labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
-          formatter={(v) => [`${Number(v).toFixed(1)} W`, "APU"]}
+          formatter={(v, name) => [`${Number(v).toFixed(1)} W`, name]}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Line
+          type="linear"
+          dataKey="wallPowerW"
+          name="Wall"
+          stroke="#10b981"
+          dot={false}
+          isAnimationActive={false}
+          connectNulls={false}
         />
         <Line
           type="linear"

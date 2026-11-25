@@ -15,7 +15,8 @@ import {
   toPowerForm,
   type PowerForm,
 } from "../lib/powerSettingsForm";
-import type { PowerSettings } from "../lib/powerTypes";
+import { modelLabel } from "../lib/powerSource";
+import type { PowerMonths, PowerSettings } from "../lib/powerTypes";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BellRing, Globe, PlugZap, ShieldAlert, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -107,6 +108,11 @@ export function SettingsPage() {
   const power = useQuery({
     queryKey: ["power-settings"],
     queryFn: () => apiGet<{ power: PowerSettings }>("/api/power/settings"),
+  });
+  // [fork] W14: the fallback model in use, from a one-month power report.
+  const powerModel = useQuery({
+    queryKey: ["power-fallback-model"],
+    queryFn: () => apiGet<PowerMonths>("/api/power/months?count=1"),
   });
   const [powerForm, setPowerForm] = useState<PowerForm>(toPowerForm({}));
   const [powerMsg, setPowerMsg] = useState<string | null>(null);
@@ -442,7 +448,7 @@ export function SettingsPage() {
 
       <Card
         title="Power cost"
-        subtitle="Prices the box's electricity on the Power page. Box power is read at the APU package; the overhead covers RAM, SSD, Wi-Fi, fans and PSU losses. The cloud comparison uses the box model's rate in model pricing."
+        subtitle="Prices the box's electricity on the Power page. Box power is read by the wall meter; where it has no reading, it is estimated from the APU package with a model learned from the last 7 days. The cloud comparison uses the box model's rate in model pricing."
         actions={<PlugZap size={16} className="text-gray-400" />}
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -468,12 +474,21 @@ export function SettingsPage() {
               value={powerForm.overhead}
               onChange={(e) => setPowerField("overhead")(e.target.value)}
             />
+            <p className="mt-1 text-[11px] text-gray-400">
+              Used only when there is less than a day of plug data to learn
+              from.
+            </p>
           </div>
         </div>
 
         <p className="mt-3 text-[11px] text-gray-400">
           Leave a field blank to clear it. Changes re-price the whole history.
         </p>
+        {powerModel.data && (
+          <p className="mt-1 text-[11px] text-gray-500">
+            {modelLabel(powerModel.data.fallbackModel)}
+          </p>
+        )}
 
         {powerErr && <p className="mt-3 text-sm text-red-600">{powerErr}</p>}
         {powerMsg && <p className="mt-3 text-sm text-green-700">{powerMsg}</p>}

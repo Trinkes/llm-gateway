@@ -41,6 +41,7 @@ export interface LivePoint {
   gpuTempC: number | null;
   ssdTempC: number | null;
   gpuPowerW: number | null;
+  wallPowerW: number | null;
 }
 
 function delta(
@@ -122,6 +123,7 @@ export function toPoint(
     gpuTempC: host?.gpuTempC ?? null,
     ssdTempC: host?.ssdTempC ?? null,
     gpuPowerW: host?.gpuPowerW ?? null,
+    wallPowerW: host?.wallPowerW ?? null,
   };
 }
 

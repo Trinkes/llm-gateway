@@ -20,6 +20,7 @@ import {
   powerRange,
   type PowerPreset,
 } from "../lib/powerRange";
+import { modelLabel, sourceLabel } from "../lib/powerSource";
 import type {
   CloudRate,
   PeriodTotals,
@@ -305,12 +306,12 @@ export function PowerPage() {
             <StatCard
               label="Energy"
               value={fmtKwh(t.totalKwh)}
-              hint={`${fmtKwh(t.measuredKwh)} measured · ${fmtKwh(t.estimatedKwh)} estimated · ${fmtKwh(t.overheadKwh)} overhead`}
+              hint={`${sourceLabel(t.source, t.wallCoverage)} · ${fmtKwh(t.wallKwh)} wall · ${fmtKwh(t.modelledKwh)} from APU · ${fmtKwh(t.estimatedKwh)} estimated`}
             />
             <StatCard
-              label="APU power"
+              label="Power"
               value={fmtW(t.avgW)}
-              hint={`average · peak ${fmtW(t.peakW)}`}
+              hint={`average at the wall · peak ${fmtW(t.peakW)}`}
             />
             <StatCard
               label="Coverage"
@@ -333,14 +334,18 @@ export function PowerPage() {
                   just to keep the box on
                 </>
               )}{" "}
-              (typical idle draw over the last 30 days, overhead included).
+              (typical idle draw at the wall over the last 30 days).
             </p>
           )}
+          <p className="text-xs text-gray-500">{modelLabel(r.fallbackModel)}</p>
 
           <CloudCard totals={t} rates={r.cloudRates} />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card title="APU power" subtitle="Measured at the APU package.">
+            <Card
+              title="Power"
+              subtitle="Wall meter, and the APU package it includes."
+            >
               {watts.isLoading ? (
                 <Spinner />
               ) : (

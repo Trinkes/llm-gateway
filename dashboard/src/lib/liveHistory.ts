@@ -45,6 +45,7 @@ const EMPTY_POINT = (t: number): HistoryPoint => ({
   gpuTempC: null,
   ssdTempC: null,
   gpuPowerW: null,
+  wallPowerW: null,
 });
 
 const pct = (v: number | null): number | null => (v === null ? null : v * 100);
@@ -96,6 +97,7 @@ export function historyPoints(h: LiveHistory): HistoryPoint[] {
       gpuTempC: hostAvg?.gpu_temp_c ?? null,
       ssdTempC: hostAvg?.ssd_temp_c ?? null,
       gpuPowerW: hostAvg?.gpu_power_w ?? null,
+      wallPowerW: hostAvg?.wall_power_w ?? null,
     });
   }
   return fillBuckets(stored, h.from, h.to, h.bucketS, EMPTY_POINT).map((p) => ({

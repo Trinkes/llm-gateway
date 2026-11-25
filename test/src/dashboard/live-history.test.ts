@@ -35,6 +35,7 @@ const host = (o: Partial<HostAvg> = {}): HostAvg => ({
   gpu_temp_c: null,
   ssd_temp_c: null,
   gpu_power_w: null,
+  wall_power_w: null,
   ...o,
 });
 
@@ -107,6 +108,7 @@ describe("historyPoints", () => {
                 gpu_temp_c: 60,
                 ssd_temp_c: 40,
                 gpu_power_w: 12,
+                wall_power_w: 30,
               }),
               max: {},
             },
@@ -141,6 +143,7 @@ describe("historyPoints", () => {
       gpuTempC: 60,
       ssdTempC: 40,
       gpuPowerW: 12,
+      wallPowerW: 30,
     });
   });
 
