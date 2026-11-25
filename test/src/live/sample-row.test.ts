@@ -47,6 +47,7 @@ function host(over: Partial<HostSnapshot> = {}): HostSnapshot {
     gpuTempC: 60,
     ssdTempC: 40,
     gpuPowerW: 80,
+    wallPowerW: null,
     ...over,
   };
 }
@@ -183,6 +184,15 @@ describe("toHostRow", () => {
       cpuSecondsTotal: 220,
     });
     expect(toHostRow("BOX", 30, host(), next).cpu_busy_pct).toBeNull();
+  });
+
+  it("toHostRow copies wall watts", () => {
+    const row = toHostRow("BOX", 10, null, host({ wallPowerW: 178.5 }));
+    expect(row.wall_power_w).toBe(178.5);
+  });
+
+  it("unreachable row has null wall", () => {
+    expect(toHostRow("BOX", 10, host(), null).wall_power_w).toBeNull();
   });
 
   it("missing source writes ok=0 row", () => {

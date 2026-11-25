@@ -149,6 +149,61 @@ describe("rollupRecent", () => {
     });
   });
 
+  it("rollup splits wall and apu-only rows", async () => {
+    const hosts = [
+      ...[0, 1, 2, 3].map((i) =>
+        host(1200 + i * 10, { gpu_power_w: 100, wall_power_w: 150 }),
+      ),
+      ...[4, 5].map((i) => host(1200 + i * 10, { gpu_power_w: 40 })),
+      host(1260, { ok: 0, gpu_power_w: null }),
+    ];
+    await writeSamples(e, [], hosts);
+    await rollupRecent(e, 2400 + 100);
+    const h = await env.DB.prepare(
+      "SELECT * FROM host_samples WHERE resolution_s = 600",
+    ).first<Record<string, number | null>>();
+    expect(h).toMatchObject({
+      samples: 6,
+      wall_samples: 4,
+      wall_power_w: 150,
+      wall_power_w_max: 150,
+      apu_only_power_w: 40,
+      gpu_power_w: 80,
+    });
+  });
+
+  it("rollup with no wall rows", async () => {
+    await writeSamples(
+      e,
+      [],
+      [0, 1].map((i) => host(1200 + i * 10, { gpu_power_w: 30 + i * 10 })),
+    );
+    await rollupRecent(e, 2400 + 100);
+    const h = await env.DB.prepare(
+      "SELECT * FROM host_samples WHERE resolution_s = 600",
+    ).first<Record<string, number | null>>();
+    expect(h).toMatchObject({
+      samples: 2,
+      wall_samples: 0,
+      wall_power_w: null,
+      apu_only_power_w: 35,
+      gpu_power_w: 35,
+    });
+  });
+
+  it("raw rows leave rollup-only columns null", async () => {
+    await writeSamples(e, [], [host(1200, { wall_power_w: 150 })]);
+    const h = await env.DB.prepare(
+      "SELECT wall_power_w, wall_samples, apu_only_power_w, wall_power_w_max FROM host_samples WHERE resolution_s = 10",
+    ).first();
+    expect(h).toEqual({
+      wall_power_w: 150,
+      wall_samples: null,
+      apu_only_power_w: null,
+      wall_power_w_max: null,
+    });
+  });
+
   it("is idempotent and counts partial buckets", async () => {
     await writeSamples(
       e,

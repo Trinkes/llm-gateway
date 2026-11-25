@@ -41,6 +41,7 @@ const HOST_AVG = [
   "gpu_temp_c",
   "ssd_temp_c",
   "gpu_power_w",
+  "wall_power_w",
 ];
 export const HOST_MAX = [
   "cpu_busy_pct",
@@ -51,6 +52,22 @@ export const HOST_MAX = [
   "cpu_temp_c",
   "gpu_temp_c",
   "gpu_power_w",
+  "wall_power_w",
+];
+
+/**
+ * [fork] W14: host rollup columns computed from other columns: how many ok rows
+ * had a wall reading, and the APU average of the ok rows without one.
+ */
+const HOST_COMPUTED: [string, string][] = [
+  [
+    "wall_samples",
+    "COUNT(CASE WHEN ok = 1 AND wall_power_w IS NOT NULL THEN 1 END)",
+  ],
+  [
+    "apu_only_power_w",
+    "AVG(CASE WHEN ok = 1 AND wall_power_w IS NULL THEN gpu_power_w END)",
+  ],
 ];
 
 /** Multi-row INSERT OR REPLACE statements (resolution_s = 10), each <= 100 params. */
@@ -108,6 +125,7 @@ function rollupStatement(
   extra: string[],
   avg: string[],
   max: string[],
+  computed: [string, string][],
   from: number,
   to: number,
 ): D1PreparedStatement {
@@ -120,6 +138,7 @@ function rollupStatement(
     ...extra,
     ...avg,
     ...max.map((c) => `${c}_max`),
+    ...computed.map(([c]) => c),
   ];
   const select = [
     "binding",
@@ -130,6 +149,7 @@ function rollupStatement(
     ...extra.map((c) => `MAX(${c})`),
     ...avg.map((c) => `AVG(${c})`),
     ...max.map((c) => `MAX(${c})`),
+    ...computed.map(([, sql]) => sql),
   ];
   return env.DB.prepare(
     `INSERT OR REPLACE INTO ${table} (${columns.join(", ")})
@@ -151,10 +171,20 @@ function rollupStatements(
       ["slots", "version"],
       INFERENCE_AVG,
       INFERENCE_MAX,
+      [],
       from,
       to,
     ),
-    rollupStatement(env, "host_samples", [], HOST_AVG, HOST_MAX, from, to),
+    rollupStatement(
+      env,
+      "host_samples",
+      [],
+      HOST_AVG,
+      HOST_MAX,
+      HOST_COMPUTED,
+      from,
+      to,
+    ),
   ];
 }
 
