@@ -1,18 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- A gateway arch with a stream of tokens flowing through it. -->
+  <!-- A "T" that routes: requests arrive along the bar, the stem fans out to models. -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#1e1b4b"/>
-      <stop offset="1" stop-color="#4338ca"/>
-    </linearGradient>
-    <linearGradient id="flow" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#f59e0b"/>
-      <stop offset="1" stop-color="#fde68a"/>
+      <stop offset="1" stop-color="#4f46e5"/>
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="14" fill="url(#bg)"/>
-  <path d="M14 54V30a18 18 0 0 1 36 0v24" fill="none" stroke="#e0e7ff" stroke-width="7" stroke-linecap="round"/>
-  <circle cx="23" cy="45" r="3.5" fill="url(#flow)" opacity=".55"/>
-  <circle cx="30" cy="37" r="4.5" fill="url(#flow)" opacity=".8"/>
-  <path d="M40 19l2.6 6.4L49 28l-6.4 2.6L40 37l-2.6-6.4L31 28l6.4-2.6z" fill="url(#flow)"/>
+  <g fill="none" stroke="#eef2ff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 15H50"/>
+    <path d="M32 15V36"/>
+  </g>
+  <g fill="none" stroke-width="4" stroke-linecap="round">
+    <path d="M32 36L18 49" stroke="#22d3ee"/>
+    <path d="M32 36V51" stroke="#c4b5fd"/>
+    <path d="M32 36L46 49" stroke="#fbbf24"/>
+  </g>
+  <circle cx="18" cy="49" r="4.5" fill="#22d3ee"/>
+  <circle cx="32" cy="51" r="4.5" fill="#c4b5fd"/>
+  <circle cx="46" cy="49" r="4.5" fill="#fbbf24"/>
 </svg>

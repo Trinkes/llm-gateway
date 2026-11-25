@@ -3,7 +3,6 @@ import { authClient } from "@contentgrowth/content-auth";
 import {
   ArrowRight,
   BarChart3,
-  Boxes,
   Gauge,
   Github,
   KeyRound,
@@ -104,7 +103,7 @@ export function LandingPage() {
       <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/90 backdrop-blur">
         <nav className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
           <Link to="/" className="flex items-center gap-2 font-semibold">
-            <Boxes size={20} className="text-indigo-600" />
+            <img src="/favicon.svg" alt="" className="h-6 w-6 rounded" />
             <span>Open LLM Proxy</span>
           </Link>
           <div className="flex items-center gap-2">
