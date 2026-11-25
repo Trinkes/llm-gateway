@@ -1,5 +1,10 @@
 // [fork] W13: energy, electricity cost and cloud comparison from per-period sums.
+// [fork] W14: wall-meter seconds are priced as measured; APU-only seconds go
+// through the fallback model (which carries the overhead setting when there is
+// no plug data), never on top of a wall reading.
+import { modelWatts, type FallbackModel } from "./fallback-model";
 import type { Period } from "./periods";
+import type { IdleStats } from "./power-query";
 import type { PowerSettings } from "./power-settings";
 
 const WS_PER_KWH = 3.6e6;
@@ -15,11 +20,14 @@ export interface TokenSums {
 
 /** One period's raw sums as read from D1. */
 export interface PeriodRaw extends Period {
-  /** Measured APU energy in watt-seconds. */
-  measuredWs: number;
-  /** Seconds covered by measurements. */
-  measuredS: number;
-  peakW: number | null;
+  /** [fork] W14: wall-meter energy (watt-seconds) and the seconds it covers. */
+  wallWs: number;
+  wallS: number;
+  /** APU energy and seconds of measured time without a wall reading. */
+  apuWs: number;
+  apuS: number;
+  wallPeakW: number | null;
+  apuPeakW: number | null;
   tokens: TokenSums;
   /** The priced requests' tokens at their `model_pricing` rates, in USD. */
   cloudUsd: number;
@@ -32,12 +40,20 @@ export interface PowerTotals {
   measuredS: number;
   /** measuredS / effectiveS; null when there is no power data. */
   coverage: number | null;
+  /** wallKwh + modelledKwh: energy of the measured seconds. */
   measuredKwh: number;
+  /** Energy read by the wall meter. */
+  wallKwh: number;
+  /** Energy of measured seconds without a wall reading, via the fallback model. */
+  modelledKwh: number;
+  /** Gaps, estimated at the range's average watts. */
   estimatedKwh: number;
-  overheadKwh: number;
   totalKwh: number;
-  /** Measured average APU watts (overhead excluded). */
+  /** Average wall watts over the measured seconds (wall and modelled). */
   avgW: number | null;
+  /** Share of measured seconds read by the wall meter. */
+  wallCoverage: number | null;
+  source: "wall" | "apu" | "mixed" | null;
   peakW: number | null;
   electricityUsd: number | null;
   tokens: TokenSums;
@@ -85,27 +101,43 @@ const addTokens = (a: TokenSums, b: TokenSums): TokenSums => ({
 const cloudOrNull = (cloudUsd: number, tokens: TokenSums, unpriced: number) =>
   unpriced > 0 && unpriced === tokens.requests ? null : cloudUsd;
 
+/** One set of sums with APU-only time already turned into wall watt-seconds. */
+interface Sums {
+  effectiveS: number;
+  wallWs: number;
+  wallS: number;
+  modelledWs: number;
+  apuS: number;
+  peakW: number | null;
+  tokens: TokenSums;
+  cloud: { usd: number; unpriced: number };
+}
+
+function sourceOf(wallS: number, measuredS: number): PowerTotals["source"] {
+  if (measuredS === 0) return null;
+  if (wallS === measuredS) return "wall";
+  return wallS === 0 ? "apu" : "mixed";
+}
+
 /** Totals for one set of sums; `fillW` is the watts gaps are estimated at. */
 function totalsOf(
-  effectiveS: number,
-  measuredWs: number,
-  measuredS: number,
-  peakW: number | null,
-  tokens: TokenSums,
-  cloud: { usd: number; unpriced: number },
+  x: Sums,
   fillW: number | null,
   s: PowerSettings,
 ): PowerTotals {
-  if (effectiveS === 0) {
+  if (x.effectiveS === 0) {
     return {
       effectiveS: 0,
       measuredS: 0,
       coverage: null,
       measuredKwh: 0,
+      wallKwh: 0,
+      modelledKwh: 0,
       estimatedKwh: 0,
-      overheadKwh: 0,
       totalKwh: 0,
       avgW: null,
+      wallCoverage: null,
+      source: null,
       peakW: null,
       electricityUsd: null,
       tokens: { ...EMPTY_TOKENS },
@@ -116,39 +148,93 @@ function totalsOf(
       cloudPer1mOutputUsd: null,
     };
   }
-  const measuredKwh = measuredWs / WS_PER_KWH;
-  const gapS = Math.max(effectiveS - measuredS, 0);
+  const measuredS = x.wallS + x.apuS;
+  const measuredWs = x.wallWs + x.modelledWs;
+  const wallKwh = x.wallWs / WS_PER_KWH;
+  const modelledKwh = x.modelledWs / WS_PER_KWH;
+  const gapS = Math.max(x.effectiveS - measuredS, 0);
   const estimatedKwh = fillW === null ? 0 : (fillW * gapS) / WS_PER_KWH;
-  const overheadKwh = ((s.overheadW ?? 0) * effectiveS) / WS_PER_KWH;
-  const totalKwh = measuredKwh + estimatedKwh + overheadKwh;
+  const totalKwh = wallKwh + modelledKwh + estimatedKwh;
   const electricityUsd =
     s.pricePerKwhUsd === undefined ? null : totalKwh * s.pricePerKwhUsd;
-  const cloudUsd = cloudOrNull(cloud.usd, tokens, cloud.unpriced);
+  const cloudUsd = cloudOrNull(x.cloud.usd, x.tokens, x.cloud.unpriced);
   return {
-    effectiveS,
+    effectiveS: x.effectiveS,
     measuredS,
-    coverage: measuredS / effectiveS,
-    measuredKwh,
+    coverage: measuredS / x.effectiveS,
+    measuredKwh: wallKwh + modelledKwh,
+    wallKwh,
+    modelledKwh,
     estimatedKwh,
-    overheadKwh,
     totalKwh,
     avgW: measuredS > 0 ? measuredWs / measuredS : null,
-    peakW,
+    wallCoverage: measuredS > 0 ? x.wallS / measuredS : null,
+    source: sourceOf(x.wallS, measuredS),
+    peakW: x.peakW,
     electricityUsd,
-    tokens,
+    tokens: x.tokens,
     cloudUsd,
-    unpricedRequests: cloud.unpriced,
+    unpricedRequests: x.cloud.unpriced,
     savingsUsd:
       cloudUsd === null || electricityUsd === null
         ? null
         : cloudUsd - electricityUsd,
-    electricityPer1mOutputUsd: per1mOutput(electricityUsd, tokens.output),
-    cloudPer1mOutputUsd: per1mOutput(cloudUsd, tokens.output),
+    electricityPer1mOutputUsd: per1mOutput(electricityUsd, x.tokens.output),
+    cloudPer1mOutputUsd: per1mOutput(cloudUsd, x.tokens.output),
   };
 }
 
 const maxOrNull = (a: number | null, b: number | null) =>
   a === null ? b : b === null ? a : Math.max(a, b);
+
+/** A period's sums with its APU-only time priced through `model`. */
+function periodSums(
+  p: PeriodRaw,
+  effectiveS: number,
+  model: FallbackModel,
+): Sums {
+  return {
+    effectiveS,
+    wallWs: p.wallWs,
+    wallS: p.wallS,
+    // linear model: k × (Σ apu W·s) + c × apu seconds
+    modelledWs: model.k * p.apuWs + model.c * p.apuS,
+    apuS: p.apuS,
+    peakW: maxOrNull(
+      p.wallPeakW,
+      p.apuPeakW === null ? null : modelWatts(model, p.apuPeakW),
+    ),
+    tokens: p.tokens,
+    cloud: { usd: p.cloudUsd, unpriced: p.unpricedRequests },
+  };
+}
+
+function addSums(a: Sums, b: Sums): Sums {
+  return {
+    effectiveS: a.effectiveS + b.effectiveS,
+    wallWs: a.wallWs + b.wallWs,
+    wallS: a.wallS + b.wallS,
+    modelledWs: a.modelledWs + b.modelledWs,
+    apuS: a.apuS + b.apuS,
+    peakW: maxOrNull(a.peakW, b.peakW),
+    tokens: addTokens(a.tokens, b.tokens),
+    cloud: {
+      usd: a.cloud.usd + b.cloud.usd,
+      unpriced: a.cloud.unpriced + b.cloud.unpriced,
+    },
+  };
+}
+
+const EMPTY_SUMS: Sums = {
+  effectiveS: 0,
+  wallWs: 0,
+  wallS: 0,
+  modelledWs: 0,
+  apuS: 0,
+  peakW: null,
+  tokens: { ...EMPTY_TOKENS },
+  cloud: { usd: 0, unpriced: 0 },
+};
 
 /**
  * Per-period and overall totals. Gaps in every period are estimated at the
@@ -159,52 +245,21 @@ export function summarize(
   dataStart: number | null,
   now: number,
   s: PowerSettings,
+  model: FallbackModel,
 ): { totals: PowerTotals; periods: PeriodTotals[] } {
-  const live = periods.map((p) => ({
-    ...p,
-    effectiveS: effectiveSeconds(p, dataStart, now),
-  }));
-  let measuredWs = 0;
-  let measuredS = 0;
-  let effectiveS = 0;
-  let peakW: number | null = null;
-  let tokens = { ...EMPTY_TOKENS };
-  const cloud = { usd: 0, unpriced: 0 };
-  for (const p of live) {
-    if (p.effectiveS === 0) continue;
-    measuredWs += p.measuredWs;
-    measuredS += p.measuredS;
-    effectiveS += p.effectiveS;
-    peakW = maxOrNull(peakW, p.peakW);
-    tokens = addTokens(tokens, p.tokens);
-    cloud.usd += p.cloudUsd;
-    cloud.unpriced += p.unpricedRequests;
-  }
-  const fillW = measuredS > 0 ? measuredWs / measuredS : null;
+  const live = periods.map((p) =>
+    periodSums(p, effectiveSeconds(p, dataStart, now), model),
+  );
+  const all = live.filter((x) => x.effectiveS > 0).reduce(addSums, EMPTY_SUMS);
+  const measuredS = all.wallS + all.apuS;
+  const fillW =
+    measuredS > 0 ? (all.wallWs + all.modelledWs) / measuredS : null;
   return {
-    totals: totalsOf(
-      effectiveS,
-      measuredWs,
-      measuredS,
-      peakW,
-      tokens,
-      cloud,
-      fillW,
-      s,
-    ),
-    periods: live.map((p) => ({
+    totals: totalsOf(all, fillW, s),
+    periods: periods.map((p, i) => ({
       start: p.start,
       end: p.end,
-      ...totalsOf(
-        p.effectiveS,
-        p.measuredWs,
-        p.measuredS,
-        p.peakW,
-        p.tokens,
-        { usd: p.cloudUsd, unpriced: p.unpricedRequests },
-        fillW,
-        s,
-      ),
+      ...totalsOf(live[i], fillW, s),
     })),
   };
 }
@@ -218,17 +273,28 @@ export function projectUsd(
   const price = s.pricePerKwhUsd;
   if (price === undefined) return null;
   if (totals.electricityUsd === null || totals.avgW === null) return null;
-  const watts = totals.avgW + (s.overheadW ?? 0);
-  return totals.electricityUsd + ((watts * remainingS) / WS_PER_KWH) * price;
+  return (
+    totals.electricityUsd + ((totals.avgW * remainingS) / WS_PER_KWH) * price
+  );
 }
 
-/** Typical idle draw (p10 APU watts plus overhead) and its monthly cost. */
+/**
+ * Typical idle draw and its monthly cost: the wall p10 when at least half the
+ * window's buckets were fully wall-measured, else the APU p10 through `model`.
+ */
 export function idleFloor(
-  p10W: number | null,
+  idle: IdleStats,
+  model: FallbackModel,
   s: PowerSettings,
 ): { watts: number; monthlyUsd: number | null } | null {
-  if (p10W === null) return null;
-  const watts = p10W + (s.overheadW ?? 0);
+  const useWall =
+    idle.wallP10W !== null && idle.wallBuckets * 2 >= idle.buckets;
+  const watts = useWall
+    ? idle.wallP10W
+    : idle.apuP10W === null
+      ? null
+      : modelWatts(model, idle.apuP10W);
+  if (watts === null) return null;
   return {
     watts,
     monthlyUsd:

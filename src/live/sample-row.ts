@@ -42,6 +42,8 @@ export interface HostSampleRow {
   gpu_temp_c: number | null;
   ssd_temp_c: number | null;
   gpu_power_w: number | null;
+  /** [fork] W14: wall watts from the metering plug; null when missing or stale. */
+  wall_power_w: number | null;
 }
 
 /** Insert column order for `inference_samples` (after `resolution_s`). */
@@ -77,6 +79,7 @@ export const HOST_COLUMNS: (keyof HostSampleRow)[] = [
   "gpu_temp_c",
   "ssd_temp_c",
   "gpu_power_w",
+  "wall_power_w",
 ];
 
 function delta(
@@ -188,6 +191,7 @@ export function toHostRow(
       gpu_temp_c: null,
       ssd_temp_c: null,
       gpu_power_w: null,
+      wall_power_w: null,
     };
   }
   const idleShare =
@@ -215,5 +219,6 @@ export function toHostRow(
     gpu_temp_c: next.gpuTempC,
     ssd_temp_c: next.ssdTempC,
     gpu_power_w: next.gpuPowerW,
+    wall_power_w: next.wallPowerW,
   };
 }

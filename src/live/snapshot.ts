@@ -67,6 +67,23 @@ export interface HostSnapshot {
   gpuTempC: number | null;
   ssdTempC: number | null;
   gpuPowerW: number | null;
+  /** [fork] W14: wall watts from the plug poller (textfile collector); null when down or stale. */
+  wallPowerW: number | null;
+}
+
+/** [fork] W14: a plug reading older than this (box clock) is treated as missing. */
+export const WALL_MAX_AGE_S = 30;
+
+/** Wall watts when the poller's last read succeeded and is fresh on the box's own clock. */
+function wallPower(m: PromSample[]): number | null {
+  const now = promValue(m, "node_time_seconds");
+  const readAt = promValue(m, "kasa_plug_read_timestamp_seconds");
+  if (promValue(m, "kasa_plug_up") !== 1 || now === null || readAt === null) {
+    return null;
+  }
+  return now - readAt <= WALL_MAX_AGE_S
+    ? promValue(m, "kasa_plug_power_watts")
+    : null;
 }
 
 export interface LiveSnapshot {
@@ -206,6 +223,7 @@ export function toHost(
       "amdgpu",
       "power1",
     ),
+    wallPowerW: wallPower(m),
   };
 }
 

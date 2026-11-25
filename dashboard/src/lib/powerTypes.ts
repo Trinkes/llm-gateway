@@ -32,11 +32,18 @@ export interface PowerTotals {
   effectiveS: number;
   measuredS: number;
   coverage: number | null;
+  /** wallKwh + modelledKwh. */
   measuredKwh: number;
+  /** [fork] W14: read by the wall meter. */
+  wallKwh: number;
+  /** Measured time without a wall reading, through the fallback model. */
+  modelledKwh: number;
   estimatedKwh: number;
-  overheadKwh: number;
   totalKwh: number;
+  /** Average wall watts over measured time (wall and modelled). */
   avgW: number | null;
+  wallCoverage: number | null;
+  source: "wall" | "apu" | "mixed" | null;
   peakW: number | null;
   electricityUsd: number | null;
   tokens: TokenSums;
@@ -45,6 +52,15 @@ export interface PowerTotals {
   savingsUsd: number | null;
   electricityPer1mOutputUsd: number | null;
   cloudPer1mOutputUsd: number | null;
+}
+
+/** [fork] W14: how APU-only time is turned into wall watts. */
+export interface FallbackModel {
+  kind: "fit" | "offset" | "setting";
+  k: number;
+  c: number;
+  pairs: number;
+  windowDays: number;
 }
 
 export type PeriodTotals = PowerTotals & { start: number; end: number };
@@ -56,6 +72,7 @@ export interface PowerReport {
   dataStart: number | null;
   settings: PowerSettings;
   cloudRates: CloudRate[];
+  fallbackModel: FallbackModel;
   totals: PowerTotals;
   days: PeriodTotals[];
   projectionUsd: number | null;
@@ -67,5 +84,6 @@ export interface PowerMonths {
   dataStart: number | null;
   settings: PowerSettings;
   cloudRates: CloudRate[];
+  fallbackModel: FallbackModel;
   months: PeriodTotals[];
 }

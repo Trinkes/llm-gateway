@@ -4,7 +4,7 @@ import halogenMetrics from "../../fixtures/live/halogen-metrics.txt?raw";
 import nodeMetrics from "../../fixtures/live/node-exporter-metrics.txt?raw";
 import { describe, expect, it } from "vitest";
 import { parsePrometheus, promValue } from "~/src/live/prometheus";
-import { toHost, toInference } from "~/src/live/snapshot";
+import { toHost, toInference, WALL_MAX_AGE_S } from "~/src/live/snapshot";
 
 const health = JSON.parse(halogenHealth) as {
   slots: number;
@@ -112,6 +112,46 @@ describe("toHost", () => {
       "$1 1",
     );
     expect(toHost("BOXSTATS", edited)!.gpuMemUsedBytes).toBe(before);
+  });
+
+  // [fork] W14: wall watts from the plug poller's textfile metrics.
+  const plug = (
+    fields: { up?: number; read?: number; now?: number | null } = {},
+  ) =>
+    [
+      nodeMetrics,
+      `kasa_plug_up ${fields.up ?? 1}`,
+      `kasa_plug_read_timestamp_seconds ${fields.read ?? 1764070571}`,
+      "kasa_plug_power_watts 178.5",
+      fields.now === null
+        ? ""
+        : `node_time_seconds ${fields.now ?? 1764070575.25}`,
+    ].join("\n");
+
+  it("reads wall watts", () => {
+    expect(toHost("BOXSTATS", plug())!.wallPowerW).toBe(178.5);
+  });
+
+  it("accepts a reading exactly WALL_MAX_AGE_S old", () => {
+    const text = plug({ read: 1764070000, now: 1764070000 + WALL_MAX_AGE_S });
+    expect(toHost("BOXSTATS", text)!.wallPowerW).toBe(178.5);
+  });
+
+  it("stale plug reading is ignored", () => {
+    const text = plug({ read: 1764070000, now: 1764070031 });
+    expect(toHost("BOXSTATS", text)!.wallPowerW).toBeNull();
+  });
+
+  it("plug down is ignored", () => {
+    expect(toHost("BOXSTATS", plug({ up: 0 }))!.wallPowerW).toBeNull();
+  });
+
+  it("no plug metrics", () => {
+    expect(toHost("BOXSTATS", nodeMetrics)!.wallPowerW).toBeNull();
+  });
+
+  it("no node time", () => {
+    expect(toHost("BOXSTATS", plug({ now: null }))!.wallPowerW).toBeNull();
   });
 
   it("returns nulls for an empty body and null for a missing source", () => {

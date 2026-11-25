@@ -228,6 +228,8 @@ export interface HostSnapshot {
   gpuTempC: number | null;
   ssdTempC: number | null;
   gpuPowerW: number | null;
+  /** [fork] W14: wall-meter watts; null when the plug reading is missing or stale. */
+  wallPowerW: number | null;
 }
 
 export interface LiveSnapshot {
@@ -272,6 +274,8 @@ export interface HostAvg {
   gpu_temp_c: number | null;
   ssd_temp_c: number | null;
   gpu_power_w: number | null;
+  /** [fork] W14: null for rows stored before migration 0008 or without a plug reading. */
+  wall_power_w: number | null;
 }
 
 export interface SeriesPoint<T> {

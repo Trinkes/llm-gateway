@@ -3,10 +3,14 @@
 // range edges), with raw 10 s rows used for buckets that have no rollup.
 // Tokens come from the org's box requests in request_metrics, priced at their
 // model_pricing rates for the cloud comparison.
+// [fork] W14: wall-meter time and APU-only time are summed apart, so the
+// summary can price APU-only time with the fallback model; the same batch
+// reads the model's least-squares sums.
 import { hostBinding } from "../live/sources";
 import { vpcBindingNames } from "../llm/transport";
 import type { ModelPricing } from "../metrics/cost-tracker";
 import { safeJsonParse } from "../utils/crypto";
+import { FIT_WINDOW_S, type PairSums } from "./fallback-model";
 import type { Period } from "./periods";
 import type { PowerSettings } from "./power-settings";
 import type { PeriodRaw, TokenSums } from "./power-summary";
@@ -22,17 +26,42 @@ export interface PowerData {
   /** First stored host sample of the org's box; null when there is none. */
   dataStart: number | null;
   periods: PeriodRaw[];
-  /** p10 of 10-minute average APU watts over the last 30 days. */
-  idleP10W: number | null;
+  /** p10 of 10-minute averages over the last 30 days, per source. */
+  idle: IdleStats;
+  /** Least-squares sums over fully wall-measured buckets of the last 7 days. */
+  pairs: PairSums;
   /** model_pricing rows of the box's providers: the cloud comparison rates. */
   cloudRates: ModelPricing[];
 }
 
+export interface IdleStats {
+  /** p10 wall watts over fully wall-measured buckets. */
+  wallP10W: number | null;
+  wallBuckets: number;
+  /** p10 APU watts over the other buckets. */
+  apuP10W: number | null;
+  /** All buckets with samples in the window. */
+  buckets: number;
+}
+
 interface EnergyRow {
   i: number;
-  ws: number;
-  secs: number;
-  peak: number;
+  wall_ws: number;
+  wall_secs: number;
+  apu_ws: number;
+  apu_secs: number;
+  wall_peak: number | null;
+  apu_peak: number | null;
+}
+
+interface PairRow {
+  n: number;
+  sx: number;
+  sy: number;
+  sxy: number;
+  sxx: number;
+  min_x: number | null;
+  max_x: number | null;
 }
 
 interface TokenRow {
@@ -73,16 +102,29 @@ const dataStartSql = (binding: string) => `SELECT MIN(m) AS first FROM (
 // CROSS JOIN keeps the periods as the outer loop so each period is one
 // primary-key range seek on host_samples.
 const OVERLAP = `(MIN(h.ts + ${ROLLUP_S}, p.e) - MAX(h.ts, p.s)) * 1.0 / ${ROLLUP_S}`;
+// Wall rows: wall_samples of them at wall_power_w. APU-only rows: the rest of
+// `samples`, at apu_only_power_w (their own APU average); rollups written
+// before wall_samples existed (NULL) are all APU-only at gpu_power_w.
+const WALL_N = "COALESCE(h.wall_samples, 0)";
+const APU_N = `(h.samples - ${WALL_N})`;
+const APU_W =
+  "CASE WHEN h.wall_samples IS NULL THEN h.gpu_power_w ELSE h.apu_only_power_w END";
 const ROLLUP_ENERGY_SQL = `WITH ${PERIODS_CTE}
 SELECT p.i,
-       SUM(h.gpu_power_w * h.samples * ${RAW_S} * ${OVERLAP}) AS ws,
-       SUM(h.samples * ${RAW_S} * ${OVERLAP}) AS secs,
-       MAX(COALESCE(h.gpu_power_w_max, h.gpu_power_w)) AS peak
+       COALESCE(SUM(h.wall_power_w * ${WALL_N} * ${RAW_S} * ${OVERLAP}), 0) AS wall_ws,
+       COALESCE(SUM(CASE WHEN h.wall_power_w IS NOT NULL
+                         THEN ${WALL_N} * ${RAW_S} * ${OVERLAP} END), 0) AS wall_secs,
+       COALESCE(SUM(${APU_W} * ${APU_N} * ${RAW_S} * ${OVERLAP}), 0) AS apu_ws,
+       COALESCE(SUM(CASE WHEN ${APU_W} IS NOT NULL
+                         THEN ${APU_N} * ${RAW_S} * ${OVERLAP} END), 0) AS apu_secs,
+       MAX(h.wall_power_w_max) AS wall_peak,
+       MAX(CASE WHEN ${APU_N} > 0 AND ${APU_W} IS NOT NULL
+                THEN COALESCE(h.gpu_power_w_max, h.gpu_power_w) END) AS apu_peak
   FROM p
   CROSS JOIN host_samples h
     ON h.binding = ?2 AND h.resolution_s = ${ROLLUP_S}
    AND h.ts > p.s - ${ROLLUP_S} AND h.ts < p.e
- WHERE h.samples > 0 AND h.gpu_power_w IS NOT NULL
+ WHERE h.samples > 0
  GROUP BY p.i`;
 
 // Raw 10 s rows, read only for buckets that have no rollup (the unfinished
@@ -98,14 +140,19 @@ missing AS (
      SELECT 1 FROM host_samples x
       WHERE x.binding = ?2 AND x.resolution_s = ${ROLLUP_S} AND x.ts = b.t)),
 raw AS (
-  SELECT h.ts, h.gpu_power_w AS w
+  SELECT h.ts, h.gpu_power_w AS w, h.wall_power_w AS ww
     FROM missing m
     CROSS JOIN host_samples h
       ON h.binding = ?2 AND h.resolution_s = ${RAW_S}
      AND h.ts >= m.t AND h.ts < m.t + ${ROLLUP_S}
-   WHERE h.ok = 1 AND h.gpu_power_w IS NOT NULL)
-SELECT p.i, SUM(raw.w * ${RAW_S}) AS ws, COUNT(*) * ${RAW_S} AS secs,
-       MAX(raw.w) AS peak
+   WHERE h.ok = 1 AND (h.wall_power_w IS NOT NULL OR h.gpu_power_w IS NOT NULL))
+SELECT p.i,
+       COALESCE(SUM(raw.ww * ${RAW_S}), 0) AS wall_ws,
+       COUNT(raw.ww) * ${RAW_S} AS wall_secs,
+       COALESCE(SUM(CASE WHEN raw.ww IS NULL THEN raw.w * ${RAW_S} END), 0) AS apu_ws,
+       COUNT(CASE WHEN raw.ww IS NULL THEN 1 END) * ${RAW_S} AS apu_secs,
+       MAX(raw.ww) AS wall_peak,
+       MAX(CASE WHEN raw.ww IS NULL THEN raw.w END) AS apu_peak
   FROM p JOIN raw ON raw.ts >= p.s AND raw.ts < p.e
  GROUP BY p.i`;
 
@@ -155,13 +202,51 @@ const RATES_SQL = `SELECT provider, model, input_per_1m, output_per_1m,
  WHERE provider IN (${boxProvidersSql("?1", "?2")})
  ORDER BY provider, model`;
 
-const IDLE_SQL = `SELECT gpu_power_w AS w FROM (
-  SELECT gpu_power_w, ROW_NUMBER() OVER (ORDER BY gpu_power_w) AS rn,
-         COUNT(*) OVER () AS n
+// Nearest-rank p10 of 10-minute averages: wall watts over fully wall-measured
+// buckets, APU watts over the rest, plus both bucket counts.
+const IDLE_SQL = `WITH b AS (
+  SELECT gpu_power_w AS g, wall_power_w AS wl,
+         COALESCE(wall_samples = samples AND wall_power_w IS NOT NULL, 0) AS is_wall
     FROM host_samples
-   WHERE binding = ? AND resolution_s = ${ROLLUP_S} AND samples > 0
-     AND gpu_power_w IS NOT NULL AND ts >= ?)
- WHERE rn = (n + 9) / 10`;
+   WHERE binding = ?1 AND resolution_s = ${ROLLUP_S} AND samples > 0 AND ts >= ?2),
+w AS (SELECT wl AS v, ROW_NUMBER() OVER (ORDER BY wl) AS rn, COUNT(*) OVER () AS n
+        FROM b WHERE is_wall = 1),
+a AS (SELECT g AS v, ROW_NUMBER() OVER (ORDER BY g) AS rn, COUNT(*) OVER () AS n
+        FROM b WHERE is_wall = 0 AND g IS NOT NULL)
+SELECT (SELECT v FROM w WHERE rn = (n + 9) / 10) AS wall_p10,
+       (SELECT COUNT(*) FROM w) AS wall_buckets,
+       (SELECT v FROM a WHERE rn = (n + 9) / 10) AS apu_p10,
+       (SELECT COUNT(*) FROM b) AS buckets`;
+
+// Least-squares sums for the fallback model: x = APU watts, y = wall watts,
+// over buckets at least half full and entirely wall-measured.
+const PAIRS_SQL = `SELECT COUNT(*) AS n,
+       COALESCE(SUM(gpu_power_w), 0) AS sx,
+       COALESCE(SUM(wall_power_w), 0) AS sy,
+       COALESCE(SUM(gpu_power_w * wall_power_w), 0) AS sxy,
+       COALESCE(SUM(gpu_power_w * gpu_power_w), 0) AS sxx,
+       MIN(gpu_power_w) AS min_x, MAX(gpu_power_w) AS max_x
+  FROM host_samples
+ WHERE binding = ? AND resolution_s = ${ROLLUP_S} AND ts >= ?
+   AND samples >= 30 AND wall_samples = samples
+   AND gpu_power_w IS NOT NULL AND wall_power_w IS NOT NULL`;
+
+const EMPTY_IDLE: IdleStats = {
+  wallP10W: null,
+  wallBuckets: 0,
+  apuP10W: null,
+  buckets: 0,
+};
+
+const EMPTY_PAIRS: PairSums = {
+  n: 0,
+  sx: 0,
+  sy: 0,
+  sxy: 0,
+  sxx: 0,
+  minX: null,
+  maxX: null,
+};
 
 const EMPTY_TOKENS: TokenSums = {
   input: 0,
@@ -175,9 +260,12 @@ function emptyPeriods(periods: Period[]): PeriodRaw[] {
   return periods.map((p) => ({
     start: p.start,
     end: p.end,
-    measuredWs: 0,
-    measuredS: 0,
-    peakW: null,
+    wallWs: 0,
+    wallS: 0,
+    apuWs: 0,
+    apuS: 0,
+    wallPeakW: null,
+    apuPeakW: null,
     tokens: { ...EMPTY_TOKENS },
     cloudUsd: 0,
     unpricedRequests: 0,
@@ -201,7 +289,8 @@ export async function loadPowerData(
       settings: parseSettings(settings.results[0]?.value),
       dataStart: null,
       periods: emptyPeriods(periods),
-      idleP10W: null,
+      idle: { ...EMPTY_IDLE },
+      pairs: { ...EMPTY_PAIRS },
       cloudRates: [],
     };
   }
@@ -211,7 +300,7 @@ export async function loadPowerData(
   const to = Math.max(...periods.map((p) => p.end));
   const rawFrom = Math.max(from, now - RAW_RETENTION_S);
   const bindings = JSON.stringify(vpcBindingNames(env, orgId));
-  const [settings, first, rollups, raw, tokens, idle, rates] =
+  const [settings, first, rollups, raw, tokens, idle, pairs, rates] =
     await env.DB.batch<unknown>([
       settingsStmt,
       env.DB.prepare(dataStartSql("?1")).bind(host.name),
@@ -231,6 +320,7 @@ export async function loadPowerData(
         bindings,
       ),
       env.DB.prepare(IDLE_SQL).bind(host.name, now - IDLE_WINDOW_S),
+      env.DB.prepare(PAIRS_SQL).bind(host.name, now - FIT_WINDOW_S),
       env.DB.prepare(RATES_SQL).bind(orgId, bindings),
     ]);
 
@@ -238,9 +328,12 @@ export async function loadPowerData(
   const out = emptyPeriods(periods);
   for (const row of [...rollups.results, ...raw.results] as EnergyRow[]) {
     const p = out[row.i];
-    p.measuredWs += row.ws;
-    p.measuredS += row.secs;
-    p.peakW = p.peakW === null ? row.peak : Math.max(p.peakW, row.peak);
+    p.wallWs += row.wall_ws;
+    p.wallS += row.wall_secs;
+    p.apuWs += row.apu_ws;
+    p.apuS += row.apu_secs;
+    p.wallPeakW = maxOrNull(p.wallPeakW, row.wall_peak);
+    p.apuPeakW = maxOrNull(p.apuPeakW, row.apu_peak);
   }
   for (const row of tokenRows) {
     out[row.i].tokens = {
@@ -260,7 +353,8 @@ export async function loadPowerData(
     dataStart:
       (first.results[0] as { first: number | null } | undefined)?.first ?? null,
     periods: out,
-    idleP10W: (idle.results[0] as { w: number } | undefined)?.w ?? null,
+    idle: toIdle(idle.results[0] as IdleRow),
+    pairs: toPairs(pairs.results[0] as PairRow),
     cloudRates: (rates.results as RateRow[]).map((r) => ({
       provider: r.provider,
       model: r.model,
@@ -269,6 +363,37 @@ export async function loadPowerData(
       cacheReadPer1m: r.cache_read_per_1m,
       cacheWritePer1m: r.cache_write_per_1m,
     })),
+  };
+}
+
+const maxOrNull = (a: number | null, b: number | null) =>
+  a === null ? b : b === null ? a : Math.max(a, b);
+
+interface IdleRow {
+  wall_p10: number | null;
+  wall_buckets: number;
+  apu_p10: number | null;
+  buckets: number;
+}
+
+function toIdle(r: IdleRow): IdleStats {
+  return {
+    wallP10W: r.wall_p10,
+    wallBuckets: r.wall_buckets,
+    apuP10W: r.apu_p10,
+    buckets: r.buckets,
+  };
+}
+
+function toPairs(r: PairRow): PairSums {
+  return {
+    n: r.n,
+    sx: r.sx,
+    sy: r.sy,
+    sxy: r.sxy,
+    sxx: r.sxx,
+    minX: r.min_x,
+    maxX: r.max_x,
   };
 }
 

@@ -3,6 +3,7 @@ import type { AppBindings } from "../app";
 import { auditLog } from "../audit/audit-logger";
 import { TenantService } from "../db/tenant";
 import { requireAdmin } from "../middlewares/rbac";
+import { chooseFallbackModel } from "../power/fallback-model";
 import { dayPeriods, isValidTimeZone, monthPeriods } from "../power/periods";
 import { loadPowerData } from "../power/power-query";
 import { applyPowerPatch, parsePowerSettings } from "../power/power-settings";
@@ -45,11 +46,14 @@ powerRouter.get("/", async (c) => {
 
   const now = nowSeconds();
   const data = await loadPowerData(c.env, orgId, dayPeriods(from, to, tz), now);
+  // [fork] W14: one fallback model per request prices all APU-only time.
+  const model = chooseFallbackModel(data.pairs, data.settings.overheadW);
   const { totals, periods } = summarize(
     data.periods,
     data.dataStart,
     now,
     data.settings,
+    model,
   );
   return c.json({
     from,
@@ -58,13 +62,14 @@ powerRouter.get("/", async (c) => {
     dataStart: data.dataStart,
     settings: data.settings,
     cloudRates: data.cloudRates,
+    fallbackModel: model,
     totals,
     days: periods,
     projectionUsd:
       to > now
         ? projectUsd(totals, to - Math.max(now, from), data.settings)
         : null,
-    idleFloor: idleFloor(data.idleP10W, data.settings),
+    idleFloor: idleFloor(data.idle, model, data.settings),
   });
 });
 
@@ -89,16 +94,18 @@ powerRouter.get("/months", async (c) => {
     monthPeriods(count, now, tz),
     now,
   );
+  const model = chooseFallbackModel(data.pairs, data.settings.overheadW);
   return c.json({
     tz,
     dataStart: data.dataStart,
     settings: data.settings,
     cloudRates: data.cloudRates,
+    fallbackModel: model,
     // Each month on its own, so its gaps are filled from its own average.
     months: data.periods.map((p) => ({
       start: p.start,
       end: p.end,
-      ...summarize([p], data.dataStart, now, data.settings).totals,
+      ...summarize([p], data.dataStart, now, data.settings, model).totals,
     })),
   });
 });
