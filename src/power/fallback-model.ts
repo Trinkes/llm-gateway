@@ -54,12 +54,21 @@ export function chooseFallbackModel(
   overheadW: number | undefined,
 ): FallbackModel {
   const base = { pairs: sums.n, windowDays: 7 as const };
-  if (sums.n < MIN_PAIRS) {
-    return { kind: "setting", k: 1, c: overheadW ?? 0, ...base };
-  }
+  const setting: FallbackModel = {
+    kind: "setting",
+    k: 1,
+    c: overheadW ?? 0,
+    ...base,
+  };
+  if (sums.n < MIN_PAIRS) return setting;
   const line = fit(sums);
   if (line) return { kind: "fit", ...line, ...base };
-  return { kind: "offset", k: 1, c: (sums.sy - sums.sx) / sums.n, ...base };
+  // Same bounds as the fit's intercept: a negative offset (wall below APU, e.g.
+  // the box moved off the plug) would price APU-only time below zero.
+  const c = (sums.sy - sums.sx) / sums.n;
+  return within(c, C_MIN, C_MAX)
+    ? { kind: "offset", k: 1, c, ...base }
+    : setting;
 }
 
 export function modelWatts(m: FallbackModel, apuW: number): number {

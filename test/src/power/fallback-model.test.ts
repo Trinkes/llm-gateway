@@ -56,9 +56,9 @@ describe("chooseFallbackModel", () => {
     expect(m.kind).toBe("offset");
   });
 
-  it("intercept above 150 W uses offset", () => {
+  it("intercept above 150 W rejects fit and offset", () => {
     const m = chooseFallbackModel(sums(line(200, 1, 151, 7, 125)), 30);
-    expect(m.kind).toBe("offset");
+    expect(m.kind).toBe("setting");
   });
 
   it("accepts the bounds themselves", () => {
@@ -92,6 +92,17 @@ describe("chooseFallbackModel", () => {
       30,
     );
     expect(m).toMatchObject({ kind: "offset", k: 1, c: 20 });
+  });
+
+  it("negative offset falls back to setting", () => {
+    // plug powered but the box moved off it: wall reads ~0 while APU draws
+    const m = chooseFallbackModel(sums(line(200, 0, 0, 7, 20)), 30);
+    expect(m).toMatchObject({ kind: "setting", k: 1, c: 30, pairs: 200 });
+  });
+
+  it("offset above 150 W falls back to setting", () => {
+    const m = chooseFallbackModel(sums(line(200, 1, 160, 7, 20)), 30);
+    expect(m.kind).toBe("setting");
   });
 
   it("missing x range uses offset", () => {
