@@ -3,6 +3,7 @@
 import type { LiveHistory } from "../lib/api";
 import {
   fmtC,
+  fmtW,
   fmtGb,
   fmtPctValue,
   hasStoredSamples,
@@ -147,7 +148,7 @@ export function LiveHistoryView({
 
         <Card
           title="Temperatures and power"
-          subtitle={`Peak CPU ${fmtC(sum.peakCpuTempC)} · GPU ${fmtC(sum.peakGpuTempC)}`}
+          subtitle={`Peak CPU ${fmtC(sum.peakCpuTempC)} · GPU ${fmtC(sum.peakGpuTempC)} · Wall ${fmtW(sum.peakWallW)}`}
         >
           {stored ? <LiveTempChart data={data} domain={domain} /> : empty}
         </Card>

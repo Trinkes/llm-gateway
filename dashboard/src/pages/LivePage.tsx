@@ -28,6 +28,7 @@ import {
 } from "../lib/format";
 import {
   fmtC,
+  fmtW,
   fmtGb,
   liveWindow,
   seededLivePoints,
@@ -323,7 +324,7 @@ export function LivePage() {
           title="Temperatures and power"
           subtitle={
             host
-              ? `CPU ${fmtC(host.cpuTempC)} · GPU ${fmtC(host.gpuTempC)} · SSD ${fmtC(host.ssdTempC)} · APU power ${host.gpuPowerW === null ? "—" : `${host.gpuPowerW.toFixed(0)} W`}`
+              ? `CPU ${fmtC(host.cpuTempC)} · GPU ${fmtC(host.gpuTempC)} · SSD ${fmtC(host.ssdTempC)} · APU ${fmtW(host.gpuPowerW)} · Wall ${fmtW(host.wallPowerW)}`
               : UNAVAILABLE
           }
         >

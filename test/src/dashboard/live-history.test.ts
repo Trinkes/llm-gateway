@@ -304,8 +304,9 @@ describe("summarize", () => {
                 gpu_mem_used_bytes: 100,
                 cpu_temp_c: 40,
                 gpu_temp_c: 50,
+                wall_power_w: 170,
               }),
-              max: { cpu_busy_pct: 90, gpu_temp_c: 80 },
+              max: { cpu_busy_pct: 90, gpu_temp_c: 80, wall_power_w: 195 },
             },
           ],
         },
@@ -342,6 +343,7 @@ describe("summarize", () => {
     expect(s.peakGpuMemBytes).toBe(100);
     expect(s.peakCpuTempC).toBe(40);
     expect(s.peakGpuTempC).toBe(80);
+    expect(s.peakWallW).toBe(195);
   });
 
   it("peak memory shares use max in-use over avg total, per bucket", () => {

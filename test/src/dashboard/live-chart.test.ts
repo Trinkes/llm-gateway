@@ -4,6 +4,7 @@ import {
   axisTick,
   bucketLabel,
   fmtC,
+  fmtW,
   fmtPctTick,
   fmtGb,
   fmtPctValue,
@@ -257,6 +258,8 @@ describe("value formatters", () => {
     expect(fmtGb(null)).toBe("—");
     expect(fmtC(70.4)).toBe("70 °C");
     expect(fmtC(null)).toBe("—");
+    expect(fmtW(178.6)).toBe("179 W");
+    expect(fmtW(null)).toBe("—");
     expect(fmtPctValue(42.4)).toBe("42%");
     expect(fmtPctValue(null)).toBe("Unavailable");
   });
