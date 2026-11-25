@@ -31,6 +31,7 @@ const EMPTY_POINT = (t: number): HistoryPoint => ({
   t,
   decodeTps: null,
   prefillTps: null,
+  activeRequests: null,
   queued: null,
   longestWaitS: null,
   kvPct: null,
@@ -77,6 +78,7 @@ export function historyPoints(h: LiveHistory): HistoryPoint[] {
       t: ts,
       decodeTps: tp?.decodeTps ?? null,
       prefillTps: tp?.prefillTps ?? null,
+      activeRequests: infAvg?.in_flight ?? null,
       queued: infAvg?.queued ?? null,
       // Peak, not average: a 10-minute rollup's mean wait hides a long one.
       longestWaitS: inf?.max.longest_wait_s ?? infAvg?.longest_wait_s ?? null,
@@ -107,6 +109,7 @@ export interface RangeSummary {
   peakDecodeTps: number | null;
   avgPrefillTps: number | null;
   peakPrefillTps: number | null;
+  peakActiveRequests: number | null;
   peakQueued: number | null;
   avgKvPct: number | null;
   peakKvPct: number | null;
@@ -182,6 +185,7 @@ export function summarize(h: LiveHistory): RangeSummary {
     peakPrefillTps: peak(
       h.throughput.map((p) => p.prefillTpsMax ?? p.prefillTps),
     ),
+    peakActiveRequests: peakOf(inf, "in_flight"),
     peakQueued: peakOf(inf, "queued"),
     avgKvPct: pct(avgOf(inf, "kv_usage_ratio")),
     peakKvPct: pct(peakOf(inf, "kv_usage_ratio")),

@@ -101,8 +101,9 @@ export function LiveHistoryView({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          label="Queued (peak)"
-          value={sum.peakQueued ?? "—"}
+          label="Active requests (peak)"
+          value={sum.peakActiveRequests ?? "—"}
+          hint={`queued peak ${sum.peakQueued ?? "—"}`}
           tone={sum.peakQueued ? "red" : "default"}
         />
         <StatCard

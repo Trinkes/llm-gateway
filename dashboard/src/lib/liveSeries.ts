@@ -20,6 +20,8 @@ export const LIVE_SEED_REFRESH_MS = 60_000;
 
 export interface LivePoint {
   t: number;
+  /** Requests being processed (holding a slot). */
+  activeRequests: number | null;
   /** Requests waiting for a slot. */
   queued: number | null;
   /** Seconds the oldest queued request has waited. */
@@ -103,6 +105,7 @@ export function toPoint(
 
   return {
     t: next.at,
+    activeRequests: inf?.inFlight ?? null,
     queued: inf?.queued ?? null,
     longestWaitS: inf?.longestWaitS ?? null,
     kvPct: inf?.kvUsageRatio == null ? null : inf.kvUsageRatio * 100,

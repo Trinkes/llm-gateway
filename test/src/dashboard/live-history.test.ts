@@ -79,6 +79,7 @@ describe("historyPoints", () => {
               ok: 1,
               samples: null,
               avg: inf({
+                in_flight: 3,
                 queued: 2,
                 kv_usage_ratio: 0.8,
                 cache_hit_ratio: 0.97,
@@ -126,6 +127,7 @@ describe("historyPoints", () => {
       t: 1_010_000,
       decodeTps: 0,
       prefillTps: 9,
+      activeRequests: 3,
       queued: 2,
       longestWaitS: null,
       kvPct: 80,
@@ -263,18 +265,20 @@ describe("summarize", () => {
               ok: 1,
               samples: 60,
               avg: inf({
+                in_flight: 1,
                 queued: 1,
                 kv_usage_ratio: 0.2,
                 cache_hit_ratio: 0.5,
                 draft_accept_ratio: 0.4,
               }),
-              max: { queued: 5, kv_usage_ratio: 0.9 },
+              max: { in_flight: 3, queued: 5, kv_usage_ratio: 0.9 },
             },
             {
               ts: 1010,
               ok: 1,
               samples: 60,
               avg: inf({
+                in_flight: 2,
                 queued: 2,
                 kv_usage_ratio: 0.4,
                 cache_hit_ratio: 0.7,
@@ -324,6 +328,7 @@ describe("summarize", () => {
     expect(s.peakDecodeTps).toBe(30);
     expect(s.avgPrefillTps).toBe(200);
     expect(s.peakPrefillTps).toBe(500);
+    expect(s.peakActiveRequests).toBe(3);
     expect(s.peakQueued).toBe(5);
     expect(s.avgKvPct).toBeCloseTo(30);
     expect(s.peakKvPct).toBeCloseTo(90);

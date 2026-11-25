@@ -1,10 +1,11 @@
-// [fork] Requests waiting for a slot and how long the oldest one has waited,
-// over time.
+// [fork] Requests being processed, requests waiting for a slot and how long
+// the oldest one has waited, over time.
 import { fmtMs } from "../lib/format";
 import type { LivePoint } from "../lib/liveSeries";
 import { LiveLineChart, type ChartLine } from "./LiveLineChart";
 
 const LINES: ChartLine<LivePoint>[] = [
+  { key: "activeRequests", name: "Active", color: "#3b82f6" },
   { key: "queued", name: "Queued", color: "#ef4444" },
   {
     key: "longestWaitS",
