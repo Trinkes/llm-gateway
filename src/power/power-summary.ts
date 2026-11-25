@@ -15,11 +15,14 @@ export interface TokenSums {
 
 /** One period's raw sums as read from D1. */
 export interface PeriodRaw extends Period {
-  /** Measured APU energy in watt-seconds. */
-  measuredWs: number;
-  /** Seconds covered by measurements. */
-  measuredS: number;
-  peakW: number | null;
+  /** [fork] W14: wall-meter energy (watt-seconds) and the seconds it covers. */
+  wallWs: number;
+  wallS: number;
+  /** APU energy and seconds of measured time without a wall reading. */
+  apuWs: number;
+  apuS: number;
+  wallPeakW: number | null;
+  apuPeakW: number | null;
   tokens: TokenSums;
   /** The priced requests' tokens at their `model_pricing` rates, in USD. */
   cloudUsd: number;

@@ -1,5 +1,5 @@
 // [fork] W13: batched energy and token reads for the Power page.
-import migration from "../../../migrations/0006_box_samples.sql?raw";
+import { createBoxTables } from "../live/box-schema";
 import { env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadPowerData } from "~/src/power/power-query";
@@ -25,11 +25,16 @@ async function host(
     ok?: number;
     max?: number | null;
     binding?: string;
+    wall?: number | null;
+    wallSamples?: number | null;
+    wallMax?: number | null;
+    apuOnly?: number | null;
   } = {},
 ) {
   await env.DB.prepare(
-    `INSERT INTO host_samples (binding, resolution_s, ts, ok, samples, gpu_power_w, gpu_power_w_max)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO host_samples (binding, resolution_s, ts, ok, samples, gpu_power_w, gpu_power_w_max,
+       wall_power_w, wall_samples, wall_power_w_max, apu_only_power_w)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       over.binding ?? "BOXSTATS",
@@ -39,6 +44,10 @@ async function host(
       res === 600 ? (over.samples ?? 60) : null,
       w,
       over.max ?? null,
+      over.wall ?? null,
+      over.wallSamples ?? null,
+      over.wallMax ?? null,
+      over.apuOnly ?? null,
     )
     .run();
 }
@@ -105,12 +114,7 @@ beforeAll(async () => {
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS model_pricing (provider TEXT NOT NULL, model TEXT NOT NULL, input_per_1m REAL NOT NULL DEFAULT 0, output_per_1m REAL NOT NULL DEFAULT 0, cache_read_per_1m REAL NOT NULL DEFAULT 0, cache_write_per_1m REAL NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (provider, model));",
   );
-  await env.DB.exec("DROP TABLE IF EXISTS host_samples");
-  const create = migration
-    .split(";")
-    .map((s) => s.replace(/--.*$/gm, "").replace(/\s+/g, " ").trim())
-    .find((s) => s.startsWith("CREATE TABLE host_samples "))!;
-  await env.DB.exec(create);
+  await createBoxTables(env.DB, ["host_samples"]);
 });
 
 beforeEach(async () => {
@@ -140,8 +144,8 @@ describe("loadPowerData energy", () => {
       [{ start: T0 + 300, end: T0 + 1200 }],
       NOW,
     );
-    expect(periods[0].measuredS).toBeCloseTo(900);
-    expect(periods[0].measuredWs).toBeCloseTo(20 * 900);
+    expect(periods[0].apuS).toBeCloseTo(900);
+    expect(periods[0].apuWs).toBeCloseTo(20 * 900);
   });
 
   it("unaligned range end never counts more than the range", async () => {
@@ -155,7 +159,7 @@ describe("loadPowerData energy", () => {
       ],
       NOW,
     );
-    expect(periods.map((p) => p.measuredS)).toEqual([450, 150]);
+    expect(periods.map((p) => p.apuS)).toEqual([450, 150]);
   });
 
   it("raw rows older than the raw retention are not read", async () => {
@@ -167,7 +171,7 @@ describe("loadPowerData energy", () => {
       [{ start: NOW - 41 * DAY, end: NOW }],
       NOW,
     );
-    expect(periods[0].measuredS).toBe(0);
+    expect(periods[0].apuS).toBe(0);
   });
 
   it("dataStart seeks rollups and raw rows", async () => {
@@ -180,9 +184,9 @@ describe("loadPowerData energy", () => {
     await host(600, T0, 20, { max: 50 });
     await host(600, T0 + 600, 40, { samples: 30, max: 70 });
     const { periods } = await loadPowerData(e, ORG, range, NOW);
-    expect(periods[0].measuredWs).toBe(20 * 600 + 40 * 300);
-    expect(periods[0].measuredS).toBe(900);
-    expect(periods[0].peakW).toBe(70);
+    expect(periods[0].apuWs).toBe(20 * 600 + 40 * 300);
+    expect(periods[0].apuS).toBe(900);
+    expect(periods[0].apuPeakW).toBe(70);
   });
 
   it("raw rows fill a missing rollup bucket", async () => {
@@ -191,9 +195,9 @@ describe("loadPowerData energy", () => {
     // raw rows inside the rolled-up bucket are not double counted
     await host(10, T0 + 10, 99);
     const { periods } = await loadPowerData(e, ORG, range, NOW);
-    expect(periods[0].measuredWs).toBe(20 * 600 + 6 * 300);
-    expect(periods[0].measuredS).toBe(660);
-    expect(periods[0].peakW).toBe(30);
+    expect(periods[0].apuWs).toBe(20 * 600 + 6 * 300);
+    expect(periods[0].apuS).toBe(660);
+    expect(periods[0].apuPeakW).toBe(30);
   });
 
   it("ok = 0 raw rows and other bindings are ignored", async () => {
@@ -202,9 +206,12 @@ describe("loadPowerData energy", () => {
     await host(600, T0, 50, { binding: "OTHERBOX" });
     const { periods } = await loadPowerData(e, ORG, range, NOW);
     expect(periods[0]).toMatchObject({
-      measuredWs: 0,
-      measuredS: 0,
-      peakW: null,
+      wallWs: 0,
+      wallS: 0,
+      apuWs: 0,
+      apuS: 0,
+      wallPeakW: null,
+      apuPeakW: null,
     });
   });
 
@@ -220,8 +227,74 @@ describe("loadPowerData energy", () => {
       ],
       NOW,
     );
-    expect(periods.map((p) => p.measuredWs)).toEqual([6000, 12000]);
+    expect(periods.map((p) => p.apuWs)).toEqual([6000, 12000]);
     expect(periods[1]).toMatchObject({ start: T0 + 3600, end: NOW });
+  });
+
+  // [fork] W14: wall readings and APU-only time are summed apart.
+  it("legacy rollups are apu-only", async () => {
+    await host(600, T0, 20, { max: 30 });
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0]).toMatchObject({
+      wallWs: 0,
+      wallS: 0,
+      apuWs: 20 * 600,
+      apuS: 600,
+      wallPeakW: null,
+      apuPeakW: 30,
+    });
+  });
+
+  it("mixed bucket prices apu-only seconds with model", async () => {
+    await host(600, T0, 80, {
+      wall: 150,
+      wallSamples: 40,
+      wallMax: 190,
+      apuOnly: 40,
+      max: 120,
+    });
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0]).toMatchObject({
+      wallS: 400,
+      wallWs: 150 * 400,
+      apuS: 200,
+      apuWs: 40 * 200,
+      wallPeakW: 190,
+      apuPeakW: 120,
+    });
+  });
+
+  it("fully wall bucket has no apu-only time", async () => {
+    await host(600, T0, 80, { wall: 150, wallSamples: 60, apuOnly: null });
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0]).toMatchObject({
+      wallS: 600,
+      apuS: 0,
+      apuWs: 0,
+      apuPeakW: null,
+    });
+  });
+
+  it("wall bucket counts even without gpu watts", async () => {
+    await host(600, T0, null, { wall: 150, wallSamples: 60 });
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0]).toMatchObject({ wallS: 600, wallWs: 90000, apuS: 0 });
+  });
+
+  it("raw rows split by wall presence", async () => {
+    for (let i = 0; i < 3; i++) {
+      await host(10, T0 + i * 10, 100, { wall: 150 + i });
+    }
+    for (let i = 3; i < 5; i++) await host(10, T0 + i * 10, 40);
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0]).toMatchObject({
+      wallS: 30,
+      wallWs: (150 + 151 + 152) * 10,
+      apuS: 20,
+      apuWs: 800,
+      wallPeakW: 152,
+      apuPeakW: 40,
+    });
   });
 
   it("dataStart is the first host row", async () => {
@@ -315,14 +388,45 @@ describe("loadPowerData cloud pricing", () => {
 describe("loadPowerData idle and settings", () => {
   it("idle p10 nearest rank", async () => {
     for (let i = 1; i <= 10; i++) await host(600, NOW - i * 600, i);
-    expect((await loadPowerData(e, ORG, range, NOW)).idleP10W).toBe(1);
+    expect((await loadPowerData(e, ORG, range, NOW)).idle.apuP10W).toBe(1);
     for (let i = 11; i <= 20; i++) await host(600, NOW - i * 600, i);
     await host(600, NOW - 40 * DAY, 0.5); // older than 30 days
-    expect((await loadPowerData(e, ORG, range, NOW)).idleP10W).toBe(2);
+    expect((await loadPowerData(e, ORG, range, NOW)).idle.apuP10W).toBe(2);
   });
 
   it("no idle rows gives null", async () => {
-    expect((await loadPowerData(e, ORG, range, NOW)).idleP10W).toBeNull();
+    expect((await loadPowerData(e, ORG, range, NOW)).idle.apuP10W).toBeNull();
+  });
+
+  it("pair sums use only fully wall buckets in the last 7 days", async () => {
+    await host(600, NOW - 600, 100, { wall: 130, wallSamples: 60 });
+    await host(600, NOW - 1200, 100, { wall: 130, wallSamples: 50 }); // partial
+    await host(600, NOW - 8 * DAY, 100, { wall: 130, wallSamples: 60 }); // old
+    await host(600, NOW - 1800, 100, { samples: 29, wall: 130, wallSamples: 29 });
+    await host(600, NOW - 2400, 100, { samples: 30, wall: 140, wallSamples: 30 });
+    expect((await loadPowerData(e, ORG, range, NOW)).pairs).toEqual({
+      n: 2,
+      sx: 200,
+      sy: 270,
+      sxy: 100 * 130 + 100 * 140,
+      sxx: 20000,
+      minX: 100,
+      maxX: 100,
+    });
+  });
+
+  it("idle p10 per source", async () => {
+    for (let i = 1; i <= 10; i++) {
+      await host(600, NOW - i * 600, i, { wall: 100 + i, wallSamples: 60 });
+    }
+    for (let i = 11; i <= 15; i++) await host(600, NOW - i * 600, i);
+    await host(600, NOW - 40 * DAY, 0.5, { wall: 1, wallSamples: 60 });
+    expect((await loadPowerData(e, ORG, range, NOW)).idle).toEqual({
+      wallP10W: 101,
+      wallBuckets: 10,
+      apuP10W: 11,
+      buckets: 15,
+    });
   });
 
   it("reads power setting", async () => {
@@ -357,15 +461,19 @@ describe("loadPowerData without a host binding", () => {
     expect(data).toEqual({
       settings: { overheadW: 5 },
       dataStart: null,
-      idleP10W: null,
+      idle: { wallP10W: null, wallBuckets: 0, apuP10W: null, buckets: 0 },
+      pairs: { n: 0, sx: 0, sy: 0, sxy: 0, sxx: 0, minX: null, maxX: null },
       cloudRates: [],
       periods: [
         {
           start: T0,
           end: NOW,
-          measuredWs: 0,
-          measuredS: 0,
-          peakW: null,
+          wallWs: 0,
+          wallS: 0,
+          apuWs: 0,
+          apuS: 0,
+          wallPeakW: null,
+          apuPeakW: null,
           tokens: {
             input: 0,
             output: 0,
