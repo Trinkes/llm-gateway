@@ -86,9 +86,7 @@ export function AppShell() {
     <div className="flex h-full min-h-screen">
       <aside className="flex w-56 shrink-0 flex-col border-r border-gray-200 bg-white">
         <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-600 text-sm font-bold text-white">
-            LP
-          </div>
+          <img src="/favicon.svg" alt="" className="h-8 w-8 rounded-md" />
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-gray-900">
               {orgs.data?.find(

@@ -15,21 +15,11 @@ export function AuthLayout({
       <div className="relative w-full max-w-md">
         {/* Logo and branding */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-700 shadow-lg shadow-indigo-600/25">
-            <svg
-              className="h-8 w-8 text-white"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-          </div>
+          <img
+            src="/favicon.svg"
+            alt=""
+            className="mx-auto mb-4 h-14 w-14 rounded-xl shadow-lg shadow-indigo-600/25"
+          />
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
             Open LLM Proxy
           </h1>
