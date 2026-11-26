@@ -11,6 +11,7 @@ import { getTenantPrefixInfo } from "../tenants/prefixes";
 import { ApiKeyScopes } from "../types";
 import { effectiveBaseUrl } from "../utils/base-url";
 import { randomBytes, sha256Hex, nowSeconds } from "../utils/crypto";
+import { parseExpiresAt } from "./key-expiry";
 import { Hono } from "hono";
 
 const KEY_PREFIX = "sk_live_";
@@ -173,14 +174,10 @@ keysRouter.post("/", async (c) => {
   }
 
   let expiresAt: number | null = null;
-  if (body.expiresAt !== undefined) {
-    if (typeof body.expiresAt !== "number" || Number.isNaN(body.expiresAt)) {
-      return c.json(
-        { error: "expiresAt must be a unix timestamp (seconds)" },
-        400,
-      );
-    }
-    expiresAt = body.expiresAt;
+  if (body.expiresAt !== undefined && body.expiresAt !== null) {
+    const parsed = parseExpiresAt(body.expiresAt, { allowNull: false });
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    expiresAt = parsed.value;
   }
 
   const plaintext = generateApiKey();
@@ -291,14 +288,10 @@ keysRouter.patch("/:id", async (c) => {
     scopeUpdate = scopes;
   }
   if (body.expiresAt !== undefined) {
-    if (body.expiresAt !== null && typeof body.expiresAt !== "number") {
-      return c.json(
-        { error: "expiresAt must be a unix timestamp or null" },
-        400,
-      );
-    }
+    const parsed = parseExpiresAt(body.expiresAt, { allowNull: true });
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     sets.push("expires_at = ?");
-    params.push(body.expiresAt);
+    params.push(parsed.value);
   }
 
   if (sets.length === 0) {
@@ -342,20 +335,39 @@ keysRouter.post("/:id/rotate", async (c) => {
   if (!ID_RE.test(id)) return c.json({ error: "Invalid key id" }, 400);
 
   const existing = await c.env.DB.prepare(
-    "SELECT id, organization_id FROM api_keys WHERE id = ? AND organization_id = ?",
+    "SELECT id, expires_at FROM api_keys WHERE id = ? AND organization_id = ?",
   )
     .bind(id, orgId)
-    .first<{ id: string }>();
+    .first<{ id: string; expires_at: number | null }>();
   if (!existing) return c.json({ error: "API key not found" }, 404);
+
+  // Optional body: { expiresAt?: number | null }. Absent keeps the current expiry.
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as {
+    expiresAt?: unknown;
+  };
+  let expiresAt = existing.expires_at;
+  if (body.expiresAt !== undefined) {
+    const parsed = parseExpiresAt(body.expiresAt, { allowNull: true });
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    expiresAt = parsed.value;
+  } else if (expiresAt !== null && expiresAt <= nowSeconds()) {
+    return c.json(
+      {
+        error:
+          "API key has expired. Set a new expiry first, or pass expiresAt when rotating.",
+      },
+      400,
+    );
+  }
 
   const plaintext = generateApiKey();
   const keyHash = await sha256Hex(plaintext);
 
   await c.env.DB.prepare(
-    `UPDATE api_keys SET key_hash = ?, key_prefix = ?, status = 'active'
-     WHERE id = ?`,
+    `UPDATE api_keys SET key_hash = ?, key_prefix = ?, status = 'active', expires_at = ?
+     WHERE id = ? AND organization_id = ?`,
   )
-    .bind(keyHash, plaintext.slice(0, 8), id)
+    .bind(keyHash, plaintext.slice(0, 8), expiresAt, id, orgId)
     .run();
 
   await auditLog(c.env, {
@@ -380,6 +392,7 @@ keysRouter.post("/:id/rotate", async (c) => {
     id,
     key: plaintext,
     keyPrefix: plaintext.slice(0, 8),
+    expiresAt,
     endpoint,
     message: "Previous key secret is revoked; update clients promptly.",
   });

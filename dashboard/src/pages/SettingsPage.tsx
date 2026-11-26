@@ -707,6 +707,7 @@ export function SettingsPage() {
                 options={[
                   { value: "quota_exceeded", label: "quota_exceeded" },
                   { value: "high_error_rate", label: "high_error_rate" },
+                  { value: "key_expiring", label: "key_expiring" },
                   { value: "test", label: "test" },
                 ]}
               />

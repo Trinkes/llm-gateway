@@ -8,6 +8,27 @@ import { deliverWebhooks } from "./webhooks";
 const SPEND_THRESHOLD = 0.8;
 const SPEND_EMAIL_TEMPLATE = "quota_exceeded";
 const ERROR_EMAIL_TEMPLATE = "high_error_rate";
+const KEY_EXPIRY_EMAIL_TEMPLATE = "api_key_expiring";
+const KEY_EXPIRY_EVENT = "key_expiring";
+const DAY_SECONDS = 86400;
+/** Warn this many days before a key expires; checked largest first. */
+const KEY_EXPIRY_WARN_DAYS = [7, 1] as const;
+/** Long enough that each warning level fires once per key. */
+const KEY_EXPIRY_DEDUP_SECONDS = 8 * DAY_SECONDS;
+
+function emailTemplateFor(eventType: string): string {
+  if (eventType === "error_rate") return ERROR_EMAIL_TEMPLATE;
+  if (eventType === KEY_EXPIRY_EVENT) return KEY_EXPIRY_EMAIL_TEMPLATE;
+  return SPEND_EMAIL_TEMPLATE;
+}
+
+interface ExpiringKeyRow {
+  id: string;
+  name: string;
+  key_prefix: string;
+  created_at: number;
+  expires_at: number;
+}
 
 export interface AlertCheckResult {
   organizationsChecked: number;
@@ -133,10 +154,7 @@ async function deliver(
     const recipients = await getAlertRecipients(env, organizationId);
     for (const recipient of recipients) {
       const result = await sendTemplateEmail(env, {
-        templateId:
-          eventType === "error_rate"
-            ? ERROR_EMAIL_TEMPLATE
-            : SPEND_EMAIL_TEMPLATE,
+        templateId: emailTemplateFor(eventType),
         to: recipient.email,
         data: emailData(recipient),
         tenantId: organizationId,
@@ -329,7 +347,91 @@ async function checkErrorRateAlerts(
 }
 
 /**
- * Evaluate every organization for spend and error-rate alerts and deliver
+ * Key-expiry warnings: one alert per active key at 7 days and at 1 day before
+ * `expires_at`. A level is skipped when the key was created inside it (a
+ * 3-day key only gets the 1-day warning; a 1-hour key gets none).
+ * `alert_events.provider` holds the key id for dedup.
+ */
+async function checkKeyExpiryAlerts(
+  env: Env,
+  organizationId: string,
+  organizationName: string,
+  alertSettings: AlertSettings,
+): Promise<{ sent: number; deliveries: number; failures: number }> {
+  const now = nowSeconds();
+  const horizon = now + KEY_EXPIRY_WARN_DAYS[0] * DAY_SECONDS;
+
+  const [keys, sentEvents] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT id, name, key_prefix, created_at, expires_at FROM api_keys
+       WHERE organization_id = ? AND status = 'active'
+         AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?`,
+    ).bind(organizationId, now, horizon),
+    env.DB.prepare(
+      `SELECT provider, level FROM alert_events
+       WHERE organization_id = ? AND event_type = ? AND created_at >= ?`,
+    ).bind(organizationId, KEY_EXPIRY_EVENT, now - KEY_EXPIRY_DEDUP_SECONDS),
+  ]);
+  const alreadySent = new Set(
+    (sentEvents.results as { provider: string | null; level: number }[]).map(
+      (e) => `${e.provider}:${e.level}`,
+    ),
+  );
+
+  let sent = 0;
+  let deliveries = 0;
+  let failures = 0;
+
+  for (const key of keys.results as ExpiringKeyRow[]) {
+    const secondsLeft = key.expires_at - now;
+    const level = [...KEY_EXPIRY_WARN_DAYS]
+      .reverse()
+      .find((days) => secondsLeft <= days * DAY_SECONDS);
+    if (level === undefined) continue;
+    if (key.expires_at - key.created_at <= level * DAY_SECONDS) continue;
+    if (alreadySent.has(`${key.id}:${level}`)) continue;
+
+    const timeLeft = formatTimeLeft(secondsLeft);
+    const expiresAtText = formatUtc(key.expires_at);
+    const result = await deliver(
+      env,
+      organizationId,
+      organizationName,
+      KEY_EXPIRY_EVENT,
+      key.id,
+      level,
+      (r) => ({
+        user_name: r.name ?? r.email,
+        organization_name: organizationName,
+        brand_name: env.APP_NAME,
+        key_name: key.name,
+        key_prefix: key.key_prefix,
+        expires_at: expiresAtText,
+        time_left: timeLeft,
+      }),
+      {
+        type: KEY_EXPIRY_EVENT,
+        organizationId,
+        organizationName,
+        level,
+        keyId: key.id,
+        keyName: key.name,
+        keyPrefix: key.key_prefix,
+        expiresAt: key.expires_at,
+        timeLeft,
+        sentAt: now,
+      },
+      alertSettings,
+    );
+    sent += 1;
+    deliveries += result.deliveries;
+    failures += result.failures;
+  }
+  return { sent, deliveries, failures };
+}
+
+/**
+ * Evaluate every organization for spend, error-rate and key-expiry alerts and deliver
  * them. Invoked from the Worker `scheduled` handler (cron) — see index.ts.
  */
 export async function runAlertChecks(env: Env): Promise<AlertCheckResult> {
@@ -362,9 +464,16 @@ export async function runAlertChecks(env: Env): Promise<AlertCheckResult> {
         organizationName,
         alertSettings,
       );
-      result.alertsSent += spend.sent + errors.sent;
-      result.deliveries += spend.deliveries + errors.deliveries;
-      result.failures += spend.failures + errors.failures;
+      const expiry = await checkKeyExpiryAlerts(
+        env,
+        org.id,
+        organizationName,
+        alertSettings,
+      );
+      result.alertsSent += spend.sent + errors.sent + expiry.sent;
+      result.deliveries +=
+        spend.deliveries + errors.deliveries + expiry.deliveries;
+      result.failures += spend.failures + errors.failures + expiry.failures;
     } catch (err) {
       console.error(`[alerts] check failed for org ${org.id}:`, err);
       result.failures += 1;
@@ -375,4 +484,17 @@ export async function runAlertChecks(env: Env): Promise<AlertCheckResult> {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/** "6 days", "1 day", "5 hours", "1 hour" (rounded down, at least 1 hour). */
+function formatTimeLeft(seconds: number): string {
+  const days = Math.floor(seconds / DAY_SECONDS);
+  if (days >= 1) return days === 1 ? "1 day" : `${days} days`;
+  const hours = Math.max(1, Math.floor(seconds / 3600));
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
+/** "2026-12-03 14:00 UTC" */
+function formatUtc(unixSeconds: number): string {
+  return `${new Date(unixSeconds * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }

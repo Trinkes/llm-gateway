@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { keysRouter } from "~/src/api/keys";
 import type { AppBindings } from "~/src/app";
 import type { SessionAuth } from "~/src/types";
+import { nowSeconds } from "~/src/utils/crypto";
 
 const session: SessionAuth = {
   userId: "user_1",
@@ -232,6 +233,155 @@ describe("POST /api/keys/:id/rotate", () => {
       method: "POST",
     });
     expect(res.status).toBe(404);
+  });
+});
+
+function jsonInit(method: string, body: unknown): RequestInit {
+  return {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
+
+async function createKey(app: Hono<AppBindings>, body: unknown) {
+  return fetchJson(app, "/api/keys", jsonInit("POST", body));
+}
+
+async function storedExpiry(id: string) {
+  const row = await env.DB.prepare(
+    "SELECT expires_at FROM api_keys WHERE id = ?",
+  )
+    .bind(id)
+    .first<{ expires_at: number | null }>();
+  return row!.expires_at;
+}
+
+describe("API key expiry validation", () => {
+  it.each([
+    [nowSeconds() - 60, "expiresAt must be in the future"],
+    [nowSeconds() + 3600.5, "expiresAt must be a unix timestamp (seconds)"],
+    ["2030-01-01", "expiresAt must be a unix timestamp (seconds)"],
+    [
+      (nowSeconds() + 3600) * 1000,
+      "expiresAt looks like milliseconds; send unix seconds",
+    ],
+  ])("create rejects expiresAt=%s", async (expiresAt, error) => {
+    const res = await createKey(buildApp(), { name: "bad", expiresAt });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(error);
+  });
+
+  it("create treats a null expiresAt as never", async () => {
+    const res = await createKey(buildApp(), { name: "n", expiresAt: null });
+    expect(res.status).toBe(201);
+    expect(res.body.expiresAt).toBeNull();
+  });
+
+  it("patch sets, clears and validates the expiry", async () => {
+    const app = buildApp();
+    const created = await createKey(app, { name: "patchy" });
+    const id = created.body.id;
+    const future = nowSeconds() + 86400;
+
+    let res = await fetchJson(
+      app,
+      `/api/keys/${id}`,
+      jsonInit("PATCH", { expiresAt: future }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.key.expiresAt).toBe(future);
+
+    res = await fetchJson(
+      app,
+      `/api/keys/${id}`,
+      jsonInit("PATCH", { expiresAt: null }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.key.expiresAt).toBeNull();
+
+    res = await fetchJson(
+      app,
+      `/api/keys/${id}`,
+      jsonInit("PATCH", { expiresAt: nowSeconds() - 1 }),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("expiresAt must be in the future");
+
+    res = await fetchJson(
+      app,
+      `/api/keys/${id}`,
+      jsonInit("PATCH", { expiresAt: "soon" }),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(
+      "expiresAt must be a unix timestamp (seconds) or null",
+    );
+  });
+});
+
+describe("POST /api/keys/:id/rotate — expiry", () => {
+  async function expiredKey(app: Hono<AppBindings>) {
+    const created = await createKey(app, { name: "old" });
+    await env.DB.prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
+      .bind(nowSeconds() - 60, created.body.id)
+      .run();
+    return created.body.id as string;
+  }
+
+  it("keeps a future expiry when none is passed", async () => {
+    const app = buildApp();
+    const future = nowSeconds() + 86400;
+    const created = await createKey(app, { name: "keep", expiresAt: future });
+    const res = await fetchJson(app, `/api/keys/${created.body.id}/rotate`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.expiresAt).toBe(future);
+    expect(await storedExpiry(created.body.id)).toBe(future);
+  });
+
+  it("refuses to rotate an expired key without a new expiry", async () => {
+    const app = buildApp();
+    const id = await expiredKey(app);
+    const res = await fetchJson(app, `/api/keys/${id}/rotate`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/has expired/);
+  });
+
+  it("rotates an expired key with a new expiry or none", async () => {
+    const app = buildApp();
+    const id = await expiredKey(app);
+    const future = nowSeconds() + 7 * 86400;
+    let res = await fetchJson(
+      app,
+      `/api/keys/${id}/rotate`,
+      jsonInit("POST", { expiresAt: future }),
+    );
+    expect(res.status).toBe(200);
+    expect(await storedExpiry(id)).toBe(future);
+
+    res = await fetchJson(
+      app,
+      `/api/keys/${id}/rotate`,
+      jsonInit("POST", { expiresAt: null }),
+    );
+    expect(res.status).toBe(200);
+    expect(await storedExpiry(id)).toBeNull();
+  });
+
+  it("rejects an invalid expiry on rotate", async () => {
+    const app = buildApp();
+    const id = await expiredKey(app);
+    const res = await fetchJson(
+      app,
+      `/api/keys/${id}/rotate`,
+      jsonInit("POST", { expiresAt: 1 }),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("expiresAt must be in the future");
   });
 });
 

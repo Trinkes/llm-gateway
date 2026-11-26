@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, organizationId TEXT NOT
 CREATE TABLE IF NOT EXISTS tenant_settings (organization_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (organization_id, key));
 CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);
 CREATE TABLE IF NOT EXISTS alert_events (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, event_type TEXT NOT NULL, provider TEXT, level REAL NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'sent', message_id TEXT, payload TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER, expires_at INTEGER, spend_disabled_until INTEGER, status TEXT NOT NULL DEFAULT 'active', scopes TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS webhooks (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL DEFAULT '[]', secret TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS system_email_templates (template_id TEXT PRIMARY KEY, template_name TEXT NOT NULL, template_type TEXT NOT NULL, subject_template TEXT NOT NULL, body_markdown TEXT NOT NULL, variables TEXT, description TEXT, is_active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT);
 CREATE TABLE IF NOT EXISTS system_email_logs (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), batch_id TEXT, recipient_email TEXT NOT NULL, recipient_user_id TEXT, template_id TEXT NOT NULL, subject TEXT, status TEXT NOT NULL DEFAULT 'pending', provider TEXT, provider_message_id TEXT, error_message TEXT, error_code TEXT, metadata TEXT, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), sent_at INTEGER);
@@ -150,6 +151,8 @@ beforeEach(async () => {
       "DELETE FROM request_metrics WHERE organization_id = ?",
     ).bind(ORG),
     env.DB.prepare("DELETE FROM webhooks WHERE organization_id = ?").bind(ORG),
+    env.DB.prepare("DELETE FROM api_keys WHERE organization_id = ?").bind(ORG),
+    env.DB.prepare("DELETE FROM system_email_logs"),
     env.DB.prepare(
       "DELETE FROM tenant_settings WHERE organization_id = ?",
     ).bind(ORG),
@@ -253,6 +256,141 @@ describe("runAlertChecks — error-rate alerts", () => {
     const second = await runAlertChecks(env);
     expect(second.alertsSent).toBe(0);
     expect(await countEvents()).toBe(eventsAfterFirst);
+  });
+});
+
+const DAY = 86400;
+
+async function seedKey(
+  id: string,
+  createdAt: number,
+  expiresAt: number | null,
+  status = "active",
+) {
+  await env.DB.prepare(
+    `INSERT INTO api_keys (id, organization_id, name, key_hash, key_prefix, created_by, created_at, expires_at, status)
+     VALUES (?, ?, ?, ?, 'sk_live_', 'user_owner', ?, ?, ?)`,
+  )
+    .bind(id, ORG, `name-${id}`, `hash-${id}`, createdAt, expiresAt, status)
+    .run();
+}
+
+async function setKeyExpiry(id: string, expiresAt: number) {
+  await env.DB.prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
+    .bind(expiresAt, id)
+    .run();
+}
+
+/** Subscribe a webhook to key_expiring and capture delivered payloads. */
+async function captureExpiryWebhooks() {
+  await env.DB.prepare(
+    `INSERT INTO webhooks (id, organization_id, url, events, secret, enabled, created_at)
+     VALUES ('wh_exp', ?, 'https://hooks.acme.test/exp', ?, NULL, 1, ?)`,
+  )
+    .bind(ORG, JSON.stringify(["key_expiring"]), nowSeconds())
+    .run();
+  const payloads: Record<string, unknown>[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      payloads.push(JSON.parse(init?.body as string));
+      return new Response("{}", { status: 200 });
+    }),
+  );
+  return payloads;
+}
+
+describe("runAlertChecks — API key expiry", () => {
+  it("warns at 7 days, then at 1 day, once per level", async () => {
+    const payloads = await captureExpiryWebhooks();
+    const now = nowSeconds();
+    await seedKey("key_a", now - 30 * DAY, now + 5 * DAY + 3600);
+
+    let result = await runAlertChecks(env);
+    expect(result.alertsSent).toBe(1);
+    let events = (await alertEvents()).filter(
+      (e) => e.event_type === "key_expiring",
+    );
+    expect(events.map((e) => [e.provider, e.level, e.channel]).sort()).toEqual([
+      ["key_a", 7, "email"],
+      ["key_a", 7, "email"],
+      ["key_a", 7, "webhook"],
+    ]);
+
+    // Same level is not re-sent.
+    result = await runAlertChecks(env);
+    expect(result.alertsSent).toBe(0);
+
+    await setKeyExpiry("key_a", now + 12 * 3600 + 60);
+    result = await runAlertChecks(env);
+    expect(result.alertsSent).toBe(1);
+    events = (await alertEvents()).filter(
+      (e) => e.event_type === "key_expiring" && e.level === 1,
+    );
+    expect(events).toHaveLength(3);
+
+    expect(payloads.map((p) => p.timeLeft)).toEqual(["5 days", "12 hours"]);
+  });
+
+  it("words 1 day and 1 hour in the singular", async () => {
+    const payloads = await captureExpiryWebhooks();
+    const now = nowSeconds();
+    await seedKey("key_day", now - 30 * DAY, now + DAY + 3 * 3600);
+    await seedKey("key_hour", now - 30 * DAY, now + 3600 + 600);
+
+    const result = await runAlertChecks(env);
+    expect(result.alertsSent).toBe(2);
+    expect(
+      Object.fromEntries(payloads.map((p) => [p.keyId, p.timeLeft])),
+    ).toEqual({ key_day: "1 day", key_hour: "1 hour" });
+  });
+
+  it("skips levels the key was created inside of", async () => {
+    const now = nowSeconds();
+    // 3-day key, 2.5 days left: no 7-day warning.
+    await seedKey("key_short", now - 12 * 3600, now + 2 * DAY + 12 * 3600);
+    // 1-hour key: no warnings at all.
+    await seedKey("key_tiny", now - 1800, now + 1800);
+
+    let result = await runAlertChecks(env);
+    expect(result.alertsSent).toBe(0);
+
+    // The 3-day key still gets its 1-day warning.
+    await setKeyExpiry("key_short", now + 20 * 3600);
+    result = await runAlertChecks(env);
+    expect(result.alertsSent).toBe(1);
+    const events = await alertEvents();
+    expect(events.every((e) => e.provider === "key_short")).toBe(true);
+    expect(events.every((e) => e.level === 1)).toBe(true);
+  });
+
+  it("ignores revoked, expired, far-off and non-expiring keys", async () => {
+    const now = nowSeconds();
+    await seedKey("key_revoked", now - 30 * DAY, now + 3 * DAY, "revoked");
+    await seedKey("key_past", now - 30 * DAY, now - 60);
+    await seedKey("key_far", now - 30 * DAY, now + 30 * DAY);
+    await seedKey("key_never", now - 30 * DAY, null);
+
+    const result = await runAlertChecks(env);
+    expect(result.alertsSent).toBe(0);
+    expect(await countEvents()).toBe(0);
+  });
+
+  it("posts a key_expiring webhook with the key details", async () => {
+    const payloads = await captureExpiryWebhooks();
+    const now = nowSeconds();
+    const expiresAt = now + 3 * DAY;
+    await seedKey("key_hook", now - 30 * DAY, expiresAt);
+    await setAlertSetting("emailEnabled", false);
+
+    await runAlertChecks(env);
+    expect(payloads).toHaveLength(1);
+    const body = payloads[0];
+    expect(body.event).toBe("key_expiring");
+    expect(body.keyId).toBe("key_hook");
+    expect(body.keyName).toBe("name-key_hook");
+    expect(body.expiresAt).toBe(expiresAt);
+    expect(body.level).toBe(7);
   });
 });
 

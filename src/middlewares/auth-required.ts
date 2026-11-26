@@ -171,7 +171,7 @@ export const apiKeyAuthMiddleware = createMiddleware<AppBindings>(
     if (row.status !== "active") {
       return c.json({ error: "API key is revoked" }, 403);
     }
-    if (row.expires_at && row.expires_at < nowSeconds()) {
+    if (row.expires_at !== null && row.expires_at <= nowSeconds()) {
       return c.json({ error: "API key has expired" }, 403);
     }
 

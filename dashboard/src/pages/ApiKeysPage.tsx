@@ -1,3 +1,6 @@
+import { ExpiryField } from "../components/ExpiryField";
+import { KeyExpiryCell } from "../components/KeyExpiryCell";
+import { KeyStatusBadge } from "../components/KeyStatusBadge";
 import {
   Badge,
   Button,
@@ -12,6 +15,7 @@ import {
 } from "../components/ui";
 import { apiGet, apiSend, ApiKeyView, ProviderView } from "../lib/api";
 import { fmtDate } from "../lib/format";
+import { fromLocalInputValue, toLocalInputValue } from "../lib/keyExpiry";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, KeyRound, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -67,6 +71,7 @@ export function ApiKeysPage() {
         name: "rotated key",
         endpoint: data.endpoint,
       }),
+    onError: (err) => setError((err as Error).message),
   });
 
   if (keys.isLoading) return <Spinner label="Loading keys…" />;
@@ -119,6 +124,7 @@ export function ApiKeysPage() {
                   <th className="px-5 py-3 font-medium">Provider</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium">Spend cap</th>
+                  <th className="px-5 py-3 font-medium">Expires</th>
                   <th className="px-5 py-3 font-medium">Last used</th>
                   <th className="px-5 py-3 text-right font-medium">Actions</th>
                 </tr>
@@ -159,12 +165,16 @@ export function ApiKeysPage() {
                       )}
                     </td>
                     <td className="px-5 py-3">
-                      <Badge tone={k.status === "active" ? "green" : "red"}>
-                        {k.status}
-                      </Badge>
+                      <KeyStatusBadge
+                        status={k.status}
+                        expiresAt={k.expiresAt}
+                      />
                     </td>
                     <td className="px-5 py-3 text-gray-600">
                       {k.scopes.spendCapUsd ? `$${k.scopes.spendCapUsd}` : "—"}
+                    </td>
+                    <td className="px-5 py-3 whitespace-nowrap">
+                      <KeyExpiryCell expiresAt={k.expiresAt} />
                     </td>
                     <td className="px-5 py-3 text-gray-500">
                       {fmtDate(k.lastUsedAt)}
@@ -296,6 +306,8 @@ function EditKeyModal({
     apiKey.scopes.defaultProvider ?? "",
   );
   const [status, setStatus] = useState(apiKey.status);
+  const initialExpiry = toLocalInputValue(apiKey.expiresAt);
+  const [expiry, setExpiry] = useState(initialExpiry);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -318,6 +330,10 @@ function EditKeyModal({
         name: name.trim() || apiKey.name,
         status,
         scopes,
+        // Only send when changed, so an already-past expiry can be left as is.
+        ...(expiry !== initialExpiry
+          ? { expiresAt: fromLocalInputValue(expiry) }
+          : {}),
       });
       onUpdated();
     } catch (err) {
@@ -377,6 +393,7 @@ function EditKeyModal({
             onChange={(e) => setSpendCapUsd(e.target.value)}
           />
         </div>
+        <ExpiryField value={expiry} onChange={setExpiry} />
         <div>
           <Label>Status</Label>
           <Select
@@ -413,6 +430,7 @@ function CreateKeyModal({
   const [name, setName] = useState("");
   const [spendCapUsd, setSpendCapUsd] = useState("");
   const [defaultProvider, setDefaultProvider] = useState("");
+  const [expiry, setExpiry] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -423,6 +441,7 @@ function CreateKeyModal({
       if (spendCapUsd.trim() !== "" && Number.isFinite(cap) && cap > 0)
         scopes.spendCapUsd = cap;
       if (defaultProvider) scopes.defaultProvider = defaultProvider;
+      const expiresAt = fromLocalInputValue(expiry);
       const res = await apiSend<{
         id: string;
         key: string;
@@ -431,6 +450,7 @@ function CreateKeyModal({
       }>("POST", "/api/keys", {
         name: name.trim() || "default",
         scopes,
+        ...(expiresAt !== null ? { expiresAt } : {}),
       });
       onCreated(res);
     } catch (err) {
@@ -488,6 +508,7 @@ function CreateKeyModal({
             onChange={(e) => setSpendCapUsd(e.target.value)}
           />
         </div>
+        <ExpiryField value={expiry} onChange={setExpiry} />
       </div>
     </Modal>
   );
