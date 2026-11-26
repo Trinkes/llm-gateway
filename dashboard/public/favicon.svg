@@ -1,22 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- A "T" that routes: requests arrive along the bar, the stem fans out to models. -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1e1b4b"/>
-      <stop offset="1" stop-color="#4f46e5"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
-  <g fill="none" stroke="#eef2ff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M14 15H50"/>
-    <path d="M32 15V36"/>
-  </g>
-  <g fill="none" stroke-width="4" stroke-linecap="round">
-    <path d="M32 36L18 49" stroke="#22d3ee"/>
-    <path d="M32 36V51" stroke="#c4b5fd"/>
-    <path d="M32 36L46 49" stroke="#fbbf24"/>
-  </g>
-  <circle cx="18" cy="49" r="4.5" fill="#22d3ee"/>
-  <circle cx="32" cy="51" r="4.5" fill="#c4b5fd"/>
-  <circle cx="46" cy="49" r="4.5" fill="#fbbf24"/>
+  <!-- Trinkes "T" whose stem is a token stream: the reply leaves as one amber token. -->
+  <rect width="64" height="64" rx="14" fill="#14123a"/>
+  <rect x="11" y="10" width="42" height="11" rx="5.5" fill="#f5f3ff"/>
+  <rect x="26.5" y="10" width="11" height="25" rx="5.5" fill="#f5f3ff"/>
+  <rect x="26.5" y="39" width="11" height="8" rx="4" fill="#f5f3ff" opacity=".6"/>
+  <circle cx="32" cy="54.5" r="5.5" fill="#fbbf24"/>
 </svg>
