@@ -129,6 +129,29 @@ Thanks,\nThe {{brand_name}} team`,
       "Sent when the provider error rate exceeds the alert threshold",
   },
   {
+    template_id: "api_key_expiring",
+    template_name: "API Key Expiring",
+    template_type: "notification",
+    subject_template: "API key {{key_name}} expires in {{time_left}}",
+    body_markdown: `Hi {{user_name}},
+
+The API key **{{key_name}}** (\`{{key_prefix}}…\`) in **{{organization_name}}** expires in **{{time_left}}**, at {{expires_at}}.
+
+Requests with this key will be refused after that. Extend its expiry or rotate it in the dashboard.
+
+Thanks,\nThe {{brand_name}} team`,
+    variables: [
+      "user_name",
+      "organization_name",
+      "brand_name",
+      "key_name",
+      "key_prefix",
+      "expires_at",
+      "time_left",
+    ],
+    description: "Sent 7 days and 1 day before an API key expires",
+  },
+  {
     template_id: "welcome",
     template_name: "Welcome",
     template_type: "auth",

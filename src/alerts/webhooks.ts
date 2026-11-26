@@ -3,6 +3,7 @@ import { newId, nowSeconds, safeJsonParse } from "../utils/crypto";
 export const WEBHOOK_EVENTS = [
   "quota_exceeded",
   "high_error_rate",
+  "key_expiring",
   "test",
 ] as const;
 
@@ -12,6 +13,7 @@ export const ALERT_TO_WEBHOOK_EVENT: Record<string, WebhookEvent> = {
   spend_daily: "quota_exceeded",
   spend_monthly: "quota_exceeded",
   error_rate: "high_error_rate",
+  key_expiring: "key_expiring",
   test: "test",
 };
 

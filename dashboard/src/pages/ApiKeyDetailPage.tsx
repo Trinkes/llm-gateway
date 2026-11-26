@@ -1,3 +1,5 @@
+import { KeyExpiryCell } from "../components/KeyExpiryCell";
+import { KeyStatusBadge } from "../components/KeyStatusBadge";
 import { RequestStatusBadge } from "../components/RequestStatusBadge";
 import { SpendCapMeter } from "../components/SpendCapMeter";
 import { TimeRangeControl } from "../components/TimeRangeControl";
@@ -158,9 +160,7 @@ export function ApiKeyDetailPage() {
             <span className="font-mono text-xs text-gray-400">
               {key.keyPrefix}…
             </span>
-            <Badge tone={key.status === "active" ? "green" : "red"}>
-              {key.status}
-            </Badge>
+            <KeyStatusBadge status={key.status} expiresAt={key.expiresAt} />
           </div>
           <p className="text-sm text-gray-500">
             {time.option.label} of traffic for this key.
@@ -234,7 +234,7 @@ export function ApiKeyDetailPage() {
             </ScopeRow>
             <ScopeRow label="Created">{fmtDate(key.createdAt)}</ScopeRow>
             <ScopeRow label="Expires">
-              {key.expiresAt ? fmtDate(key.expiresAt) : "Never"}
+              <KeyExpiryCell expiresAt={key.expiresAt} />
             </ScopeRow>
             <ScopeRow label="Last used">{fmtDate(key.lastUsedAt)}</ScopeRow>
           </dl>
