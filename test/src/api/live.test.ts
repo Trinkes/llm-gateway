@@ -80,6 +80,7 @@ beforeAll(async () => {
     "inference_samples",
     "host_samples",
     "throughput_rollups",
+    "model_activity_rollups",
   ]);
   await env.DB.batch([
     env.DB.prepare(
