@@ -6,6 +6,7 @@ import {
   vertexBaseUrl,
   vertexModelsPath,
 } from "../llm/google-vertex";
+import { aliasModelList } from "../llm/model-aliases";
 import {
   builtinModels,
   mergeModels,
@@ -257,6 +258,8 @@ export async function modelsV2(input: ModelsInput): Promise<Response> {
             entry(id, "openai-completions", synthesizedMetadata(id)),
           );
         models = mergeModels(models, custom);
+        // [fork] W18: list a provider's model aliases, not the upstream ids.
+        models = aliasModelList(cfg.settings, models);
       }
       // List only the providers this key may use: its provider list, else
       // its bound provider, else all ([fork] W16).

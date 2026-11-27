@@ -120,6 +120,23 @@ describe("chatCompletionsV2 with a vpc provider", () => {
     expect(globalFetch).not.toHaveBeenCalled();
   });
 
+  // [fork] W18
+  it("sends the upstream id for a model alias", async () => {
+    mockGetProviderConfig.mockResolvedValue({
+      ...localBox,
+      settings: {
+        ...localBox.settings,
+        modelAliases: { "qwen-flash": "up-id" },
+      },
+    });
+    const binding = { fetch: vi.fn().mockResolvedValue(completion()) };
+
+    const res = await chat({ VPC_BINDINGS: "HALOGEN:org_1", HALOGEN: binding });
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(binding.fetch.mock.calls[0][1].body).model).toBe("up-id");
+  });
+
   it("returns not_configured when the binding is not allowlisted", async () => {
     const binding = { fetch: vi.fn() };
 

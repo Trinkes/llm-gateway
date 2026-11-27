@@ -11,6 +11,7 @@ import {
   vertexModelId,
 } from "../llm/google-vertex";
 import { applyInjectBody } from "../llm/inject-body";
+import { upstreamModelId as upstreamModelIdFor } from "../llm/model-aliases";
 import { resolveDefaultModel } from "../llm/model-catalog";
 import { createTenantModels, modelFor } from "../llm/models-factory";
 import {
@@ -821,7 +822,8 @@ export async function chatCompletionsV2(
   // Route 3: V1 fallback (Ollama, Cohere, Perplexity, custom OpenAI-compatible endpoints)
   // and Google Vertex AI Service Account mode (OpenAI-compatible endpoint with custom auth).
   let client: V1OpenAICompatibleClient;
-  let upstreamModelId = modelId;
+  // [fork] W18: a provider's model alias reaches the upstream under its own id.
+  let upstreamModelId = upstreamModelIdFor(config.settings, modelId);
   if (isVertexProvider(providerName)) {
     let vertexAuth: Record<string, string>;
     try {

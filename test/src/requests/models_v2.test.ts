@@ -137,3 +137,32 @@ describe("modelsV2 for a key with several providers", () => {
     expect(ids.some((id) => id.startsWith("local-other/"))).toBe(false);
   });
 });
+
+// [fork] W18: aliases replace upstream ids in the list.
+describe("modelsV2 with model aliases", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("lists the alias instead of the upstream id", async () => {
+    mockListProviderConfigs.mockResolvedValue([
+      localBox({
+        transport: "vpc",
+        vpcBinding: "HALOGEN",
+        modelAliases: { "z-image-turbo": "sd-cpp-local" },
+      }),
+    ]);
+    const binding = {
+      fetch: vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: "sd-cpp-local" }] })),
+        ),
+    };
+
+    const ids = await listedIds({
+      VPC_BINDINGS: "HALOGEN:org_1",
+      HALOGEN: binding,
+    });
+
+    expect(ids).toEqual(["local-m5/z-image-turbo"]);
+  });
+});

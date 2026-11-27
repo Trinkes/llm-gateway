@@ -2,6 +2,7 @@
 // providers (typically a self-hosted image server behind a vpc binding).
 import { TenantService } from "../db/tenant";
 import { getProviderConfig } from "../llm/credential-store";
+import { upstreamModelId } from "../llm/model-aliases";
 import {
   assertModelAllowed,
   assertProviderAllowed,
@@ -216,7 +217,12 @@ export async function imageGenerationsV2(
   request.signal.addEventListener("abort", () => abort.abort(), {
     once: true,
   });
-  const upstream = client.imageGenerations(JSON.stringify({ ...body, model }), {
+  // [fork] W18: a provider's model alias reaches the upstream under its own id.
+  const upstreamBody = JSON.stringify({
+    ...body,
+    model: upstreamModelId(config.settings, model),
+  });
+  const upstream = client.imageGenerations(upstreamBody, {
     signal: abort.signal,
   });
   const graceTimer: { id?: ReturnType<typeof setTimeout> } = {};

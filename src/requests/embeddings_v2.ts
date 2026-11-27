@@ -1,5 +1,6 @@
 import { TenantService } from "../db/tenant";
 import { getProviderConfig } from "../llm/credential-store";
+import { upstreamModelId } from "../llm/model-aliases";
 import {
   assertModelAllowed,
   assertProviderAllowed,
@@ -107,9 +108,13 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
     );
   let upstream: Response;
   try {
-    upstream = await client.embeddings(JSON.stringify({ ...body, model }), {
-      signal: request.signal,
-    });
+    upstream = await client.embeddings(
+      JSON.stringify({
+        ...body,
+        model: upstreamModelId(config.settings, model), // [fork] W18
+      }),
+      { signal: request.signal },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     record({ statusCode: 502, errorMessage: message });
