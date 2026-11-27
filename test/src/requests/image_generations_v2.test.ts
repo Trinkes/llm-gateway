@@ -1,5 +1,5 @@
 // [fork] W12: OpenAI-compatible image generations over a vpc provider.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getProviderConfig } from "~/src/llm/credential-store";
 import type { DecryptedProviderConfig } from "~/src/llm/credential-store";
 import { checkRateLimits } from "~/src/llm/rate-limit";
@@ -66,7 +66,12 @@ const pending: Promise<unknown>[] = [];
 
 function generate(
   env: object,
-  options: { body?: unknown; apiKeyAuth?: ApiKeyAuth } = {},
+  options: {
+    body?: unknown;
+    apiKeyAuth?: ApiKeyAuth;
+    timing?: { graceMs: number; heartbeatMs: number };
+    signal?: AbortSignal;
+  } = {},
 ): Promise<Response> {
   const body =
     "body" in options
@@ -82,10 +87,12 @@ function generate(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: typeof body === "string" ? body : JSON.stringify(body),
+      signal: options.signal,
     }),
     env: env as Env,
     apiKeyAuth: options.apiKeyAuth ?? baseAuth,
     ctx: { waitUntil: (p) => void pending.push(p) },
+    timing: options.timing,
   });
 }
 
@@ -364,6 +371,50 @@ describe("imageGenerationsV2", () => {
     expect(body.error.code).toBe("unsupported_provider");
   });
 
+  it("defaults the content type of a body-less upstream reply", async () => {
+    const binding = {
+      fetch: vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
+    };
+
+    const res = await generate(boxEnv(binding));
+
+    expect(res.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("reports a non-Error upstream failure as text", async () => {
+    const binding = { fetch: vi.fn().mockRejectedValue("socket hang up") };
+
+    const res = await generate(boxEnv(binding));
+    const body = (await res.json()) as { error: { message: string } };
+
+    expect(res.status).toBe(502);
+    expect(body.error.message).toBe("socket hang up");
+  });
+
+  it("aborts the upstream call when the client request is aborted", async () => {
+    let upstreamSignal: AbortSignal | undefined;
+    const binding = {
+      fetch: vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            upstreamSignal = init.signal ?? undefined;
+            init.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            );
+          }),
+      ),
+    };
+    const client = new AbortController();
+
+    const pendingRes = generate(boxEnv(binding), { signal: client.signal });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    client.abort();
+    const res = await pendingRes;
+
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(res.status).toBe(502);
+  });
+
   it("returns not_configured when the binding is not allowlisted", async () => {
     const binding = { fetch: vi.fn() };
 
@@ -374,5 +425,178 @@ describe("imageGenerationsV2", () => {
     expect(body.error.code).toBe("not_configured");
     expect(binding.fetch).not.toHaveBeenCalled();
     expect(mockCheckRateLimits).not.toHaveBeenCalled();
+  });
+});
+
+describe("imageGenerationsV2 with a public provider", () => {
+  const globalFetch = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", globalFetch);
+    mockCheckRateLimits.mockResolvedValue({ allowed: true });
+    tenant.settings = {};
+    pending.length = 0;
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uses the registry base URL when no custom base URL is set", async () => {
+    mockGetProviderConfig.mockResolvedValue({
+      ...imageBox,
+      provider: "openai",
+      keys: ["sk-test"],
+      settings: {},
+    });
+    globalFetch.mockResolvedValue(imageResponse());
+
+    const res = await generate(
+      {},
+      { body: { model: "openai/gpt-image-1", prompt: "a cat" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(globalFetch.mock.calls[0][0]).toBe(
+      "https://api.openai.com/v1/images/generations",
+    );
+  });
+});
+
+describe("imageGenerationsV2 heartbeat", () => {
+  const timing = { graceMs: 20, heartbeatMs: 10 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetProviderConfig.mockResolvedValue(imageBox);
+    mockCheckRateLimits.mockResolvedValue({ allowed: true });
+    tenant.settings = {};
+    pending.length = 0;
+  });
+
+  function slowUpstream(settle: () => Promise<Response>, afterMs = 60) {
+    let signal: AbortSignal | undefined;
+    const binding = {
+      fetch: vi.fn((_url: string, init: RequestInit) => {
+        signal = init.signal ?? undefined;
+        return new Promise<Response>((resolve, reject) => {
+          setTimeout(() => settle().then(resolve, reject), afterMs);
+        });
+      }),
+    };
+    return { binding, signal: () => signal };
+  }
+
+  it("sends spaces then the image when the upstream is slow", async () => {
+    let answered = false;
+    const { binding } = slowUpstream(async () => {
+      answered = true;
+      return imageResponse();
+    });
+
+    const res = await generate(boxEnv(binding), { timing });
+
+    expect(answered).toBe(false);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const text = await res.text();
+    expect(text).toMatch(/^ {2,}\{"created":1/);
+    expect(JSON.parse(text)).toEqual(IMAGE);
+    await settled();
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 200 });
+  });
+
+  it("answers normally when the upstream is fast", async () => {
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+
+    const res = await generate(boxEnv(binding), { timing });
+
+    expect((await res.text()).startsWith("{")).toBe(true);
+  });
+
+  it("reports an error object after the commit", async () => {
+    const { binding } = slowUpstream(
+      async () => new Response("boom", { status: 500 }),
+    );
+
+    const res = await generate(boxEnv(binding), { timing });
+    const parsed = JSON.parse(await res.text());
+    await settled();
+
+    expect(res.status).toBe(200);
+    expect(parsed.error).toEqual({
+      message: expect.stringContaining("boom"),
+      type: "upstream_error",
+      code: 500,
+    });
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 500 });
+  });
+
+  it("reports 502 when the upstream throws after the commit", async () => {
+    const { binding } = slowUpstream(async () => {
+      throw new Error("tunnel closed");
+    });
+
+    const res = await generate(boxEnv(binding), { timing });
+    const parsed = JSON.parse(await res.text());
+    await settled();
+
+    expect(res.status).toBe(200);
+    expect(parsed.error).toEqual({
+      message: "tunnel closed",
+      type: "upstream_error",
+      code: 502,
+    });
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 502 });
+  });
+
+  it("aborts the upstream when the client goes away", async () => {
+    const clears = vi.spyOn(globalThis, "clearInterval");
+    const { binding, signal } = slowUpstream(async () => imageResponse(), 500);
+
+    const res = await generate(boxEnv(binding), { timing });
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    await reader.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(new TextDecoder().decode(first.value)).toBe(" ");
+    expect(signal()?.aborted).toBe(true);
+    expect(clears).toHaveBeenCalled();
+    clears.mockRestore();
+  });
+
+  it("stops cleanly when the client leaves before the upstream answers", async () => {
+    const { binding } = slowUpstream(async () => imageResponse(), 60);
+
+    const res = await generate(boxEnv(binding), { timing });
+    await res.body!.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await settled();
+
+    expect(mockRecord).toHaveBeenCalledTimes(1);
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 499 });
+  });
+
+  it("records one row when the error cannot reach a departed client", async () => {
+    const { binding } = slowUpstream(
+      async () => new Response("boom", { status: 500 }),
+    );
+
+    const res = await generate(boxEnv(binding), { timing });
+    await res.body!.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await settled();
+
+    expect(mockRecord).toHaveBeenCalledTimes(1);
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 500 });
+  });
+
+  it("closes with only spaces when a slow upstream sends no body", async () => {
+    const { binding } = slowUpstream(
+      async () => new Response(null, { status: 200 }),
+    );
+
+    const res = await generate(boxEnv(binding), { timing });
+
+    expect((await res.text()).trim()).toBe("");
   });
 });

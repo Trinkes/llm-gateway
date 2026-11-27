@@ -172,7 +172,11 @@ export async function imageGenerationsV2(
     model,
     method: "image",
   };
+  let recorded = false;
+  // One row per request, even when a failure follows a recorded outcome.
   const record = (statusCode: number, errorMessage?: string) => {
+    if (recorded) return;
+    recorded = true;
     ctx.waitUntil(
       recordChatRequest(env, attempt, {
         statusCode,
@@ -182,17 +186,48 @@ export async function imageGenerationsV2(
     );
   };
 
-  let upstream: Response;
-  try {
-    upstream = await client.imageGenerations(
-      JSON.stringify({ ...body, model }),
-      { signal: request.signal },
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    record(502, message);
-    return errorBody(502, "upstream_error", message);
+  const timing = input.timing ?? {
+    graceMs: IMAGE_GRACE_MS,
+    heartbeatMs: IMAGE_HEARTBEAT_MS,
+  };
+  // One controller for the upstream call: aborted when the client request is
+  // aborted, or when the client cancels the heartbeat stream.
+  const abort = new AbortController();
+  request.signal.addEventListener("abort", () => abort.abort(), {
+    once: true,
+  });
+  const upstream = client.imageGenerations(JSON.stringify({ ...body, model }), {
+    signal: abort.signal,
+  });
+  const graceTimer: { id?: ReturnType<typeof setTimeout> } = {};
+  const first = await Promise.race([
+    upstream.then(
+      (response) => ({ response }),
+      (error: unknown) => ({ error }),
+    ),
+    new Promise<"grace">((resolve) => {
+      graceTimer.id = setTimeout(() => resolve("grace"), timing.graceMs);
+    }),
+  ]);
+  clearTimeout(graceTimer.id);
+  if (first !== "grace") {
+    if ("error" in first) {
+      const message = errorText(first.error);
+      record(502, message);
+      return errorBody(502, "upstream_error", message);
+    }
+    return directResponse(first.response, record);
   }
+  return heartbeatResponse(upstream, timing.heartbeatMs, abort, record, ctx);
+}
+
+type Recorder = (statusCode: number, errorMessage?: string) => void;
+
+/** The upstream answered within the grace period: pass its status through. */
+async function directResponse(
+  upstream: Response,
+  record: Recorder,
+): Promise<Response> {
   if (!upstream.ok) {
     const message = await upstreamErrorMessage(upstream);
     record(upstream.status, message);
@@ -206,6 +241,82 @@ export async function imageGenerationsV2(
         upstream.headers.get("content-type") ?? "application/json",
     },
   });
+}
+
+/**
+ * The upstream is slow: commit a 200 and write a space every `heartbeatMs`
+ * so idle timeouts between the client and the Worker do not fire. Leading
+ * whitespace is valid JSON, so clients parse the final body unchanged. A
+ * failure after the commit becomes an OpenAI-style error object.
+ */
+function heartbeatResponse(
+  upstream: Promise<Response>,
+  heartbeatMs: number,
+  abort: AbortController,
+  record: Recorder,
+  ctx: { waitUntil(promise: Promise<unknown>): void },
+): Response {
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array>();
+  const writer = writable.getWriter();
+  const beat = () => writer.write(encoder.encode(" ")).catch(() => {});
+  void beat();
+  const interval = setInterval(beat, heartbeatMs);
+  const stop = () => clearInterval(interval);
+  // The client went away: stop beating and cancel the upstream call.
+  writer.closed.catch(() => {
+    stop();
+    abort.abort();
+  });
+
+  const writeError = async (code: number, message: string) => {
+    await writer.write(
+      encoder.encode(
+        JSON.stringify({ error: { message, type: "upstream_error", code } }),
+      ),
+    );
+  };
+
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const res = await upstream;
+        stop();
+        if (!res.ok) {
+          const message = await upstreamErrorMessage(res);
+          record(res.status, message);
+          await writeError(res.status, message);
+        } else {
+          if (res.body) {
+            const reader = res.body.getReader();
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              await writer.write(value);
+            }
+          }
+          record(res.status);
+        }
+      } catch (err) {
+        stop();
+        const message = errorText(err);
+        // 499: the client closed the stream before the reply was delivered.
+        record(abort.signal.aborted ? 499 : 502, message);
+        await writeError(502, message).catch(() => {});
+      } finally {
+        await writer.close().catch(() => {});
+      }
+    })(),
+  );
+
+  return new Response(readable, {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function spendLimitMessage(
