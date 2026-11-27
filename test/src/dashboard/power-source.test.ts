@@ -17,7 +17,13 @@ describe("sourceLabel", () => {
 describe("modelLabel", () => {
   it("fit", () => {
     expect(
-      modelLabel({ kind: "fit", k: 1.1234, c: 22.6, pairs: 1008, windowDays: 7 }),
+      modelLabel({
+        kind: "fit",
+        k: 1.1234,
+        c: 22.6,
+        pairs: 1008,
+        windowDays: 7,
+      }),
     ).toBe("Fallback: wall ≈ 1.12 × APU + 23 W (fit on 1,008 pairs, last 7 d)");
   });
 

@@ -42,6 +42,8 @@ interface SeedRow {
   tokensCacheRead?: number | null;
   tokensCacheWrite?: number | null;
   errorMessage?: string | null;
+  kind?: string;
+  units?: number | null;
 }
 
 async function seed(rows: SeedRow[]) {
@@ -51,8 +53,8 @@ async function seed(rows: SeedRow[]) {
         `INSERT INTO request_metrics
            (id, organization_id, user_id, api_key_id, timestamp, provider, model, method,
             status_code, latency_ms, tokens_input, tokens_output, tokens_cache_read,
-            tokens_cache_write, cost_usd, error_message, cache_hit)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, 120, 10, 5, ?, ?, 0.001, ?, ?)`,
+            tokens_cache_write, cost_usd, error_message, cache_hit, units)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 120, 10, 5, ?, ?, 0.001, ?, ?, ?)`,
       ).bind(
         r.id,
         r.organizationId ?? ORG,
@@ -61,11 +63,13 @@ async function seed(rows: SeedRow[]) {
         r.timestamp ?? NOW - 30,
         r.provider ?? "local-m5",
         r.model ?? "qwen",
+        r.kind ?? "chat",
         r.statusCode ?? 200,
         r.tokensCacheRead ?? null,
         r.tokensCacheWrite ?? null,
         r.errorMessage ?? null,
         r.cacheHit ?? 0,
+        r.units ?? null,
       ),
     ),
   );
@@ -107,7 +111,7 @@ async function list(extra: Record<string, string> = {}) {
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER, expires_at INTEGER, status TEXT NOT NULL DEFAULT 'active', scopes TEXT NOT NULL DEFAULT '{}', spend_disabled_until INTEGER);",
@@ -140,12 +144,14 @@ describe("parseRequestFilters", () => {
       cache: "none",
       apiKeyId: "key_a",
       model: "",
+      kind: "image",
     };
     expect(parseRequestFilters((k) => q[k])).toEqual({
       status: "error",
       cache: "none",
       apiKeyId: "key_a",
       model: undefined,
+      kind: "image",
     });
   });
 
@@ -193,6 +199,19 @@ describe("GET /api/metrics/requests", () => {
       status_code: 502,
       error_message: "upstream down",
     });
+  });
+
+  it("filters by kind and returns units", async () => {
+    await seed([
+      { id: "a" },
+      { id: "b", kind: "image", units: 4 },
+      { id: "c", kind: "audio" },
+    ]);
+    const { requests, total } = await list({ kind: "image" });
+    expect(total).toBe(1);
+    expect(requests[0]).toMatchObject({ id: "b", method: "image", units: 4 });
+    expect(ids((await list({ kind: "audio" })).requests)).toEqual(["c"]);
+    expect(ids((await list()).requests).sort()).toEqual(["a", "b", "c"]);
   });
 
   it("filters by provider, model and key", async () => {
@@ -269,12 +288,24 @@ describe("GET /api/metrics/requests/facets", () => {
     expect(res.status).toBe(200);
     const { facets } = (await res.json()) as { facets: RequestFacet[] };
     expect(facets).toEqual([
-      { provider: "openai", model: "gpt", requests: 2 },
-      { provider: "local-m5", model: "qwen", requests: 1 },
+      { provider: "openai", model: "gpt", kind: "chat", requests: 2 },
+      { provider: "local-m5", model: "qwen", kind: "chat", requests: 1 },
     ]);
     expect(await requestFacets(env, ORG, START - 7200, START - 3600)).toEqual(
       [],
     );
+  });
+
+  it("separates kinds of the same model", async () => {
+    await seed([
+      { id: "a", provider: "openai", model: "m" },
+      { id: "b", provider: "openai", model: "m", kind: "image" },
+      { id: "c", provider: "openai", model: "m", kind: "image" },
+    ]);
+    expect(await requestFacets(env, ORG, START, END)).toEqual([
+      { provider: "openai", model: "m", kind: "image", requests: 2 },
+      { provider: "openai", model: "m", kind: "chat", requests: 1 },
+    ]);
   });
 
   it("rejects a bad range", async () => {

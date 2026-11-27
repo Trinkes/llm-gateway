@@ -1,3 +1,5 @@
+import { kindUsageStatement, toKindUsage, type KindUsage } from "./kind-usage";
+
 /** Windows up to this long are bucketed by hour, longer ones by day. */
 const HOURLY_MAX_SECONDS = 48 * 3600;
 
@@ -8,12 +10,16 @@ export interface KeySeriesPoint {
   requests: number;
   errors: number;
   costUsd: number;
+  /** [fork] W17: requests per request kind in this bucket. */
+  kinds: Record<string, number>;
 }
 
-/** Requests and cost per provider + model for one key. */
+/** Requests and cost per provider + model + kind for one key. */
 export interface KeyModelUsage {
   provider: string;
   model: string;
+  /** [fork] W17 */
+  kind: string;
   requests: number;
   errors: number;
   costUsd: number;
@@ -32,6 +38,8 @@ export interface KeyWindowSummary {
   latencyAvgMs: number | null;
   /** Unix seconds of the newest request in the window, or null. */
   lastRequestAt: number | null;
+  /** [fork] W17: the window split per request kind. */
+  byKind: KindUsage[];
 }
 
 export interface KeyDetailUsage {
@@ -62,7 +70,7 @@ export function bucketSecondsFor(start: number, end: number): number {
 
 /**
  * Window totals, a time series, a per-model split and lifetime spend for one
- * API key. All four queries go to D1 in one batch (one round trip).
+ * API key. All five queries go to D1 in one batch (one round trip).
  */
 export async function keyDetailUsage(
   env: Env,
@@ -76,7 +84,7 @@ export async function keyDetailUsage(
     "organization_id = ? AND api_key_id = ? AND timestamp >= ? AND timestamp < ?";
   const params = [organizationId, apiKeyId, start, end];
 
-  const [summary, series, models, lifetime] = await env.DB.batch([
+  const [summary, series, models, lifetime, kinds] = await env.DB.batch([
     env.DB.prepare(
       `SELECT COUNT(*) AS requests,
               SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors,
@@ -92,23 +100,26 @@ export async function keyDetailUsage(
     // truncate to the bucket start.
     env.DB.prepare(
       `SELECT timestamp - (timestamp % ?) AS t,
+              method AS kind,
               COUNT(*) AS requests,
               SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors,
               COALESCE(SUM(cost_usd), 0) AS costUsd
        FROM request_metrics WHERE ${scope}
-       GROUP BY t ORDER BY t ASC`,
+       GROUP BY t, method ORDER BY t ASC, method`,
     ).bind(bucket, ...params),
     env.DB.prepare(
-      `SELECT provider, model, COUNT(*) AS requests,
+      `SELECT provider, model, method AS kind, COUNT(*) AS requests,
               SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors,
               COALESCE(SUM(cost_usd), 0) AS costUsd
        FROM request_metrics WHERE ${scope}
-       GROUP BY provider, model ORDER BY requests DESC, provider, model`,
+       GROUP BY provider, model, method
+       ORDER BY requests DESC, provider, model, method`,
     ).bind(...params),
     env.DB.prepare(
       `SELECT COALESCE(SUM(cost_usd), 0) AS cost_usd
        FROM request_metrics WHERE organization_id = ? AND api_key_id = ?`,
     ).bind(organizationId, apiKeyId),
+    kindUsageStatement(env, scope, params),
   ]);
 
   const s = summary.results[0] as SummaryRow;
@@ -125,9 +136,33 @@ export async function keyDetailUsage(
       costUsd: s.cost_usd ?? 0,
       latencyAvgMs: s.latency_avg_ms,
       lastRequestAt: s.last_request_at,
+      byKind: toKindUsage(kinds.results),
     },
-    series: series.results as unknown as KeySeriesPoint[],
+    series: foldSeries(
+      series.results as unknown as Array<
+        Omit<KeySeriesPoint, "kinds"> & { kind: string }
+      >,
+    ),
     models: models.results as unknown as KeyModelUsage[],
     lifetimeCostUsd: (lifetime.results[0] as { cost_usd: number }).cost_usd,
   };
+}
+
+/** [fork] W17: folds (bucket, kind) rows into one point per bucket. */
+function foldSeries(
+  rows: Array<Omit<KeySeriesPoint, "kinds"> & { kind: string }>,
+): KeySeriesPoint[] {
+  const points = new Map<number, KeySeriesPoint>();
+  for (const r of rows) {
+    let point = points.get(r.t);
+    if (!point) {
+      point = { t: r.t, requests: 0, errors: 0, costUsd: 0, kinds: {} };
+      points.set(r.t, point);
+    }
+    point.requests += r.requests;
+    point.errors += r.errors;
+    point.costUsd += r.costUsd;
+    point.kinds[r.kind] = r.requests;
+  }
+  return [...points.values()];
 }

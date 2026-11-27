@@ -1,6 +1,6 @@
 // [fork] Per-request cost: local models cost fractions of a cent per request.
-import { describe, expect, it } from "vitest";
 import { fmtUsdPrecise } from "../../../dashboard/src/lib/format";
+import { describe, expect, it } from "vitest";
 
 describe("fmtUsdPrecise", () => {
   it.each([

@@ -103,7 +103,7 @@ async function request(
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS provider_configs (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, config TEXT NOT NULL, UNIQUE(organization_id, provider));",
@@ -409,8 +409,16 @@ describe("loadPowerData idle and settings", () => {
     await host(600, NOW - 600, 100, { wall: 130, wallSamples: 60 });
     await host(600, NOW - 1200, 100, { wall: 130, wallSamples: 50 }); // partial
     await host(600, NOW - 8 * DAY, 100, { wall: 130, wallSamples: 60 }); // old
-    await host(600, NOW - 1800, 100, { samples: 29, wall: 130, wallSamples: 29 });
-    await host(600, NOW - 2400, 100, { samples: 30, wall: 140, wallSamples: 30 });
+    await host(600, NOW - 1800, 100, {
+      samples: 29,
+      wall: 130,
+      wallSamples: 29,
+    });
+    await host(600, NOW - 2400, 100, {
+      samples: 30,
+      wall: 140,
+      wallSamples: 30,
+    });
     expect((await loadPowerData(e, ORG, range, NOW)).pairs).toEqual({
       n: 2,
       sx: 200,

@@ -63,13 +63,7 @@ const raw: PeriodRaw[] = [
 
 describe("summarize", () => {
   it("full maths", () => {
-    const { totals, periods } = summarize(
-      raw,
-      0,
-      10_000,
-      settings,
-      overhead10,
-    );
+    const { totals, periods } = summarize(raw, 0, 10_000, settings, overhead10);
     expect(totals.coverage).toBe(0.5);
     expect(totals.avgW).toBe(30);
     expect(totals.wallKwh).toBe(0);
@@ -241,13 +235,7 @@ describe("summarize", () => {
         unpricedRequests: tokens.requests,
       },
     ];
-    const { totals, periods } = summarize(
-      two,
-      0,
-      10_000,
-      settings,
-      overhead10,
-    );
+    const { totals, periods } = summarize(two, 0, 10_000, settings, overhead10);
     expect(totals.cloudUsd).toBeCloseTo(7.1);
     expect(totals.unpricedRequests).toBe(tokens.requests);
     expect(periods[1].cloudUsd).toBeNull();
