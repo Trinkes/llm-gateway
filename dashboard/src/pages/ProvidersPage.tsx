@@ -507,6 +507,12 @@ function ProviderFormModal({
       ? JSON.stringify(initialSettings.injectBody, null, 2)
       : "",
   );
+  // [fork] W18: public model name → upstream model id.
+  const [aliasesText, setAliasesText] = useState(
+    isCustom && initialSettings?.modelAliases
+      ? JSON.stringify(initialSettings.modelAliases, null, 2)
+      : "",
+  );
   const [keysText, setKeysText] = useState(hasExistingKeys ? KEY_MASK : "");
   const [accountId, setAccountId] = useState(
     provider === "cloudflare-workers-ai"
@@ -681,6 +687,10 @@ function ProviderFormModal({
           // [fork] W3: a JSON parse error surfaces through the caller's catch.
           ...(injectBodyText.trim()
             ? { injectBody: JSON.parse(injectBodyText) }
+            : {}),
+          // [fork] W18: a JSON parse error surfaces through the caller's catch.
+          ...(aliasesText.trim()
+            ? { modelAliases: JSON.parse(aliasesText) }
             : {}),
           customModels: parseCustomModels(),
           rotationStrategy,
@@ -1106,6 +1116,21 @@ function ProviderFormModal({
                   <p className="mt-1 text-[11px] text-gray-400">
                     Merged into every chat request; the client's own values win.
                     stream_options is added to streaming requests only.
+                  </p>
+                </div>
+                {/* [fork] W18 */}
+                <div>
+                  <Label>Model aliases (JSON, optional)</Label>
+                  <textarea
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    rows={3}
+                    placeholder={'{"friendly-name": "upstream-model-id"}'}
+                    value={aliasesText}
+                    onChange={(e) => setAliasesText(e.target.value)}
+                  />
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    /v1/models lists the friendly name instead of the upstream
+                    id, and requests using it reach the upstream id.
                   </p>
                 </div>
               </div>

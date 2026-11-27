@@ -132,6 +132,28 @@ describe("imageGenerationsV2", () => {
     });
   });
 
+  // [fork] W18
+  it("sends the upstream id for a model alias", async () => {
+    mockGetProviderConfig.mockResolvedValue({
+      ...imageBox,
+      settings: {
+        ...imageBox.settings,
+        modelAliases: { "z-image-turbo": "sd-cpp-local" },
+      },
+    });
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+
+    await generate(boxEnv(binding));
+    await settled();
+
+    expect(JSON.parse(binding.fetch.mock.calls[0][1].body).model).toBe(
+      "sd-cpp-local",
+    );
+    expect(mockRecord.mock.calls[0][1]).toMatchObject({
+      model: "z-image-turbo",
+    });
+  });
+
   it("records an image row", async () => {
     const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
 

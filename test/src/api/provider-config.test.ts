@@ -934,6 +934,30 @@ describe("VPC transport settings", () => {
       );
     },
   );
+
+  // [fork] W18
+  it("saves trimmed modelAliases", async () => {
+    mockSaveProviderConfig.mockResolvedValue(
+      config({ provider: "local-m5", keys: [], settings: vpcSettings }),
+    );
+    const { status } = await send("PUT", "/api/providers/local-m5", {
+      settings: { ...vpcSettings, modelAliases: { " z ": " up " } },
+    });
+    expect(status).toBe(200);
+    expect(
+      mockSaveProviderConfig.mock.calls[0][3].settings.modelAliases,
+    ).toEqual({
+      z: "up",
+    });
+  });
+
+  it("rejects bad modelAliases", async () => {
+    const { status, body } = await send("PUT", "/api/providers/local-m5", {
+      settings: { ...vpcSettings, modelAliases: ["z"] },
+    });
+    expect(status).toBe(400);
+    expect(body.error).toContain("settings.modelAliases");
+  });
 });
 
 // [fork] W3: injectBody provider setting.
