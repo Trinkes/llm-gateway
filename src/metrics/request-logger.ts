@@ -8,7 +8,7 @@ export interface ChatAttempt {
   startedAt: number;
   provider: string;
   model: string;
-  method: "chat";
+  method: "chat" | "image"; // [fork] W12
 }
 
 const EMPTY_USAGE: TokenUsage = {
