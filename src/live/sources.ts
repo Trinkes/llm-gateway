@@ -7,6 +7,7 @@ import {
   isAllowed,
   parseAllowlist,
   vpcBindingNames,
+  vpcHealthPaths,
   type UpstreamFetcher,
 } from "../llm/transport";
 
@@ -51,7 +52,7 @@ export function inferenceBinding(
   env: object,
   organizationId: string,
 ): LiveBinding | null {
-  return firstBound(env, vpcBindingNames(env, organizationId));
+  return firstBound(env, inferenceNames(env, organizationId));
 }
 
 /** First bound host-metrics binding that `organizationId` may use. */
@@ -60,6 +61,12 @@ export function hostBinding(
   organizationId: string,
 ): LiveBinding | null {
   return firstBound(env, hostMetricsBindingNames(env, organizationId));
+}
+
+/** [fork] W15: VPC bindings that serve the inference API (no custom health path). */
+function inferenceNames(env: object, organizationId?: string): string[] {
+  const custom = vpcHealthPaths(env);
+  return vpcBindingNames(env, organizationId).filter((n) => !custom.has(n));
 }
 
 function bound(env: object, names: string[]): LiveBinding[] {
@@ -81,7 +88,7 @@ export function samplerBindings(env: object): {
   const allowlist = parseAllowlist(
     (env as Record<string, unknown>).VPC_BINDINGS,
   );
-  const allowed = vpcBindingNames(env).filter(
+  const allowed = inferenceNames(env).filter(
     (name) => allowlist.get(name)!.length > 0,
   );
   return {

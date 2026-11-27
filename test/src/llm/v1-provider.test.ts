@@ -169,3 +169,76 @@ describe("V1OpenAICompatibleClient error responses without keys", () => {
     expect(binding.fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+// [fork] W15: image generations through the same client.
+describe("V1OpenAICompatibleClient.imageGenerations", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function box(custom: Record<string, string> = {}) {
+    const binding = {
+      fetch: vi.fn().mockResolvedValue(new Response("{}", { status: 200 })),
+    };
+    const client = new V1OpenAICompatibleClient({
+      provider: "local-box",
+      keys: [],
+      custom: { baseUrl: "http://127.0.0.1:11436", ...custom },
+      fetcher: binding,
+    });
+    return { binding, client };
+  }
+
+  it("posts to the custom images path through the fetcher", async () => {
+    const { binding, client } = box();
+    const body = JSON.stringify({ model: "m", prompt: "a cat" });
+
+    const res = await client.imageGenerations(body);
+
+    expect(res.status).toBe(200);
+    expect(binding.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = binding.fetch.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:11436/v1/images/generations");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(body);
+    expect(init.headers.authorization).toBeUndefined();
+  });
+
+  it("honours an explicit custom.imagesPath", async () => {
+    const { binding, client } = box({ imagesPath: "/v1/images/generations" });
+
+    await client.imageGenerations("{}");
+
+    expect(binding.fetch.mock.calls[0][0]).toBe(
+      "http://127.0.0.1:11436/v1/images/generations",
+    );
+  });
+
+  it("refuses an images path outside the allowed vpc endpoints", async () => {
+    const { binding, client } = box({ imagesPath: "/other" });
+
+    await expect(client.imageGenerations("{}")).rejects.toThrow(/not allowed/);
+    expect(binding.fetch).not.toHaveBeenCalled();
+  });
+
+  it("passes the abort signal to the upstream fetch", async () => {
+    const { binding, client } = box();
+    const controller = new AbortController();
+
+    await client.imageGenerations("{}", { signal: controller.signal });
+
+    expect(binding.fetch.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+
+  it("uses /images/generations under a registry provider's base URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new V1OpenAICompatibleClient({
+      provider: "openai",
+      keys: ["sk-test"],
+    });
+
+    await client.imageGenerations("{}");
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/images\/generations$/);
+    expect(fetchMock.mock.calls[0][0]).not.toMatch(/\/v1\/v1\//);
+  });
+});

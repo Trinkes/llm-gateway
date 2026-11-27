@@ -94,6 +94,15 @@ export function applyForkOptions(prod, options) {
     prod.vars.VPC_BINDINGS = vpcNames
       .map((name) => (allow.has(name) ? `${name}:${allow.get(name)}` : name))
       .join(",");
+    // [fork] W15
+    const healthPaths = parseHealthPaths(
+      options.vpcHealthPaths ?? [],
+      services,
+      hostAllow,
+    );
+    if (healthPaths.length > 0) {
+      prod.vars.VPC_HEALTH_PATHS = healthPaths.join(",");
+    }
     if (hostAllow.size > 0) {
       prod.vars.HOST_METRICS_BINDINGS = [...hostAllow]
         .map(([name, orgs]) => `${name}:${orgs}`)
@@ -122,6 +131,28 @@ export function applyForkOptions(prod, options) {
   return { warnings };
 }
 
+const HEALTH_PATH_RE = /^\/[A-Za-z0-9._~\/-]*$/;
+
+/** [fork] W15: "NAME=/path" entries → ["NAME:/path"], for bound provider services only. */
+function parseHealthPaths(list, services, hostAllow) {
+  return list.map((entry) => {
+    const eq = entry.indexOf("=");
+    const name = eq > 0 ? entry.slice(0, eq).trim() : entry.trim();
+    const path = eq > 0 ? entry.slice(eq + 1).trim() : "";
+    if (!services.has(name) || hostAllow.has(name)) {
+      throw new Error(
+        `--vpc-health-path: ${name} is not a bound provider VPC service`,
+      );
+    }
+    if (!HEALTH_PATH_RE.test(path) || path.split("/").includes("..")) {
+      throw new Error(
+        `--vpc-health-path: invalid path "${path}" for ${name} (absolute, no query or ..)`,
+      );
+    }
+    return `${name}:${path}`;
+  });
+}
+
 function envList(value) {
   return (value ?? "")
     .split(",")
@@ -138,6 +169,7 @@ function envList(value) {
  * - CUSTOM_DOMAIN: "api.example.com"
  * - ZERO_PRICE_PROVIDERS: "provider-a,provider-b"
  * - HOST_METRICS: "NAME=org_a|org_b,NAME=*" ([fork] W11)
+ * - VPC_HEALTH_PATHS: "NAME=/path,NAME=/path" ([fork] W15)
  */
 export function forkOptionsFromEnv(flags, env) {
   const customDomain = (flags["custom-domain"] ?? env.CUSTOM_DOMAIN)?.trim();
@@ -148,6 +180,7 @@ export function forkOptionsFromEnv(flags, env) {
     zeroPriceProviders:
       flags["zero-price-provider"] ?? envList(env.ZERO_PRICE_PROVIDERS),
     hostMetrics: flags["host-metrics"] ?? envList(env.HOST_METRICS),
+    vpcHealthPaths: flags["vpc-health-path"] ?? envList(env.VPC_HEALTH_PATHS), // [fork] W15
   };
 }
 

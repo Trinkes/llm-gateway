@@ -29,7 +29,7 @@ function envWith(bindings: Record<string, unknown>, allowlist: string) {
 }
 
 beforeEach(async () => {
-  for (const name of ["HALOGEN", "OTHER"]) {
+  for (const name of ["HALOGEN", "OTHER", "IMAGEGEN"]) {
     await env.SESSION_CACHE.delete(`health:${name}`);
   }
 });
@@ -151,5 +151,60 @@ describe("GET /api/health/upstreams", () => {
 
     expect(res.status).toBe(200);
     expect(body.upstreams.map((u) => u.binding)).toEqual(["HALOGEN"]);
+  });
+});
+
+// [fork] W15: upstreams without a Halogen-style /health.
+describe("checkUpstreams with VPC_HEALTH_PATHS", () => {
+  const allow = `HALOGEN:${ORG},IMAGEGEN:${ORG}`;
+
+  it("probes the configured path and treats any 2xx as ok", async () => {
+    const halogen = healthy();
+    const image = {
+      fetch: vi.fn().mockResolvedValue(new Response('{"data":[]}')),
+    };
+    await checkUpstreams({
+      ...envWith({ HALOGEN: halogen, IMAGEGEN: image }, allow),
+      VPC_HEALTH_PATHS: "IMAGEGEN:/v1/models",
+    } as Env);
+
+    expect(image.fetch.mock.calls[0][0]).toBe("http://vpc.internal/v1/models");
+    expect(halogen.fetch.mock.calls[0][0]).toBe("http://vpc.internal/health");
+    const entries = await readUpstreamHealth(envWith({}, allow), ORG);
+    expect(entries.map((e) => [e.binding, e.status, e.version])).toEqual([
+      ["HALOGEN", "ok", "0.20.5"],
+      ["IMAGEGEN", "ok", null],
+    ]);
+  });
+
+  it("records down when the configured path cannot be fetched", async () => {
+    const image = { fetch: vi.fn().mockRejectedValue(new Error("tunnel")) };
+    await checkUpstreams({
+      ...envWith({ IMAGEGEN: image }, `IMAGEGEN:${ORG}`),
+      VPC_HEALTH_PATHS: "IMAGEGEN:/v1/models",
+    } as Env);
+
+    expect(image.fetch).toHaveBeenCalledTimes(1);
+    const [entry] = await readUpstreamHealth(
+      envWith({}, `IMAGEGEN:${ORG}`),
+      ORG,
+    );
+    expect(entry.status).toBe("down");
+  });
+
+  it("records down when the configured path answers with an error", async () => {
+    const image = {
+      fetch: vi.fn().mockResolvedValue(new Response("x", { status: 503 })),
+    };
+    await checkUpstreams({
+      ...envWith({ IMAGEGEN: image }, `IMAGEGEN:${ORG}`),
+      VPC_HEALTH_PATHS: " IMAGEGEN:/v1/models , bad-entry",
+    } as Env);
+
+    const [entry] = await readUpstreamHealth(
+      envWith({}, `IMAGEGEN:${ORG}`),
+      ORG,
+    );
+    expect(entry.status).toBe("down");
   });
 });
