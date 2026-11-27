@@ -5,6 +5,7 @@
 // row per request, under its own kind (request-kinds.ts).
 import { imageOutputTokens, isPriceableSize } from "../metrics/image-tokens";
 import { imageCount } from "../metrics/request-kinds";
+import { transcriptionUsage } from "../metrics/transcription-usage";
 import {
   invalid,
   serveVpcRoute,
@@ -127,30 +128,45 @@ const IMAGE_EDITS: VpcRouteSpec = {
   send: postTo("/v1/images/edits"),
 };
 
+/** Transcript formats whose reply carries `usage` (OpenAI's JSON shapes). */
+const PRICED_FORMATS = new Set(["json", "verbose_json"]);
+
 const TRANSCRIPTIONS: VpcRouteSpec = {
   kind: "transcription",
   what: "transcriptions",
   // Long recordings can take minutes; the JSON reply tolerates leading spaces.
   heartbeat: true,
-  priced: false,
+  // [fork] W21: priced from the reply's `usage` tokens (audio in, text out).
+  priced: true,
+  replyUsage: transcriptionUsage,
   async parse(request): Promise<RouteRequest | Response> {
     const form = await readForm(request);
     if (form instanceof Response) return form;
-    const repeated = singleTextFields(form, ["model"]);
+    const repeated = singleTextFields(form, [
+      "model",
+      "response_format",
+      "stream",
+    ]);
     if (repeated) return repeated;
     const rawModel = text(form.get("model"));
     if (!rawModel) return invalid("model is required");
     if (!isFile(form.get("file"))) return invalid("file is required");
-    const format = text(form.get("response_format"));
+    // [fork] W21: the price comes from the JSON reply's `usage`, so only
+    // replies that carry it are served: text, srt, vtt and streamed replies
+    // would be free. JSON also tolerates the heartbeat's leading spaces.
+    const format = form.get("response_format");
+    if (format !== null && !PRICED_FORMATS.has(format as string)) {
+      return invalid("response_format must be json or verbose_json");
+    }
+    const stream = form.get("stream");
+    if (stream !== null && stream !== "false") {
+      return invalid("stream is not supported");
+    }
     return {
       rawModel,
       contentType: null,
       tokens: 0,
       units: null,
-      // Heartbeat spaces are only harmless in front of JSON: text, srt and
-      // vtt replies are passed through as sent.
-      heartbeat:
-        format === "" || format === "json" || format === "verbose_json",
       body: (upstreamModel) => copyForm(form, { model: upstreamModel }),
     };
   },
