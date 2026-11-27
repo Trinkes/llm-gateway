@@ -69,7 +69,7 @@ function generate(
   options: {
     body?: unknown;
     apiKeyAuth?: ApiKeyAuth;
-    timing?: { graceMs: number; heartbeatMs: number };
+    timing?: { graceMs: number; heartbeatMs: number; maxMs?: number };
     signal?: AbortSignal;
   } = {},
 ): Promise<Response> {
@@ -590,6 +590,26 @@ describe("imageGenerationsV2 heartbeat", () => {
 
     expect(mockRecord).toHaveBeenCalledTimes(1);
     expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 500 });
+  });
+
+  it("gives up with a 504 error object after the maximum wait", async () => {
+    const { binding, signal } = slowUpstream(async () => imageResponse(), 5000);
+
+    const res = await generate(boxEnv(binding), {
+      timing: { ...timing, maxMs: 60 },
+    });
+    const parsed = JSON.parse(await res.text());
+    await settled();
+
+    expect(res.status).toBe(200);
+    expect(parsed.error).toEqual({
+      message: expect.stringContaining("did not answer"),
+      type: "upstream_error",
+      code: 504,
+    });
+    expect(signal()?.aborted).toBe(true);
+    expect(mockRecord).toHaveBeenCalledTimes(1);
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 504 });
   });
 
   it("closes with only spaces when a slow upstream sends no body", async () => {

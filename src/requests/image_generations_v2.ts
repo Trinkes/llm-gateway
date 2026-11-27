@@ -22,6 +22,8 @@ import { ApiKeyAuth } from "../types";
 export const IMAGE_GRACE_MS = 15_000;
 /** Interval between heartbeat spaces once the 200 is committed. */
 export const IMAGE_HEARTBEAT_MS = 10_000;
+/** Give up on an upstream that has not answered after this long (hung GPU). */
+export const IMAGE_MAX_MS = 600_000;
 
 const ERROR_TEXT_LIMIT = 512;
 
@@ -31,7 +33,7 @@ export interface ImageGenerationsInput {
   apiKeyAuth: ApiKeyAuth;
   ctx: { waitUntil(promise: Promise<unknown>): void };
   /** Tests only; defaults to IMAGE_GRACE_MS / IMAGE_HEARTBEAT_MS. */
-  timing?: { graceMs: number; heartbeatMs: number };
+  timing?: { graceMs: number; heartbeatMs: number; maxMs?: number };
 }
 
 interface ImageRequestBody {
@@ -224,7 +226,14 @@ export async function imageGenerationsV2(
     }
     return directResponse(first.response, record);
   }
-  return heartbeatResponse(upstream, timing.heartbeatMs, abort, record, ctx);
+  return heartbeatResponse(
+    upstream,
+    timing.heartbeatMs,
+    timing.maxMs ?? IMAGE_MAX_MS,
+    abort,
+    record,
+    ctx,
+  );
 }
 
 type Recorder = (statusCode: number, errorMessage?: string) => void;
@@ -258,6 +267,7 @@ async function directResponse(
 function heartbeatResponse(
   upstream: Promise<Response>,
   heartbeatMs: number,
+  maxMs: number,
   abort: AbortController,
   record: Recorder,
   ctx: { waitUntil(promise: Promise<unknown>): void },
@@ -285,9 +295,21 @@ function heartbeatResponse(
 
   ctx.waitUntil(
     (async () => {
+      const maxTimer: { id?: ReturnType<typeof setTimeout> } = {};
+      const timedOut = new Promise<"timeout">((resolve) => {
+        maxTimer.id = setTimeout(() => resolve("timeout"), maxMs);
+      });
       try {
-        const res = await upstream;
+        const res = await Promise.race([upstream, timedOut]);
+        clearTimeout(maxTimer.id);
         stop();
+        if (res === "timeout") {
+          abort.abort();
+          const message = `Upstream did not answer within ${Math.round(maxMs / 1000)} s`;
+          record(504, message);
+          await writeError(504, message);
+          return;
+        }
         if (!res.ok) {
           const message = await upstreamErrorMessage(res);
           record(res.status, message);
@@ -304,6 +326,7 @@ function heartbeatResponse(
           record(res.status);
         }
       } catch (err) {
+        clearTimeout(maxTimer.id);
         stop();
         const message = errorText(err);
         // 499: the client closed the stream before the reply was delivered.
