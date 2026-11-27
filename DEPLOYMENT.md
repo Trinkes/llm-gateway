@@ -231,7 +231,7 @@ npm run deploy -- … --vpc-service-id HALOGEN=<SERVICE_ID> --vpc-allow HALOGEN=
 ```
 
 Then add a Custom OpenAI-compatible provider with transport `vpc`, binding `IMAGEGEN` and the server's
-`scheme://host:port` as base URL. Image requests reach `/v1/images/generations` only (`settings.imagesPath`).
+`scheme://host:port` as base URL. Image requests reach `/v1/images/generations` only (`settings.imagesPath`), and only vpc providers may serve them: image rows are recorded at cost 0.
 When the upstream has not answered within 15 s, the gateway commits `200` and sends a space every 10 s until the
 image arrives, so idle timeouts do not cut long generations; a failure after that point is returned as an
 OpenAI-style `{"error": …}` body with status 200.

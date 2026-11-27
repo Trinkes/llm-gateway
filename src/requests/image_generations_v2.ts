@@ -108,6 +108,16 @@ export async function imageGenerationsV2(
       `Provider '${provider}' does not support OpenAI image generations`,
     );
   }
+  // Image rows are recorded at cost 0 and charge no token budget, so only
+  // self-hosted (vpc) providers may serve them: a paid public provider here
+  // would bypass spend caps.
+  if (config.settings.transport !== "vpc") {
+    return errorBody(
+      400,
+      "unsupported_provider",
+      `Provider '${provider}' is not a vpc provider; image generations are only served by vpc providers`,
+    );
+  }
   const modelError = assertModelAllowed(
     settings,
     apiKeyAuth.scopes,
@@ -154,14 +164,10 @@ export async function imageGenerationsV2(
     keys: config.keys,
     rotationStrategy: config.settings.rotationStrategy,
     fetcher,
-    custom:
-      config.settings.baseUrl || config.settings.accountId
-        ? {
-            baseUrl: config.settings.baseUrl as string | undefined,
-            accountId: config.settings.accountId as string | undefined,
-            imagesPath: config.settings.imagesPath as string | undefined,
-          }
-        : undefined,
+    custom: {
+      baseUrl: config.settings.baseUrl as string | undefined,
+      imagesPath: config.settings.imagesPath as string | undefined,
+    },
   });
 
   const attempt: ChatAttempt = {

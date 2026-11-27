@@ -440,24 +440,26 @@ describe("imageGenerationsV2 with a public provider", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("uses the registry base URL when no custom base URL is set", async () => {
+  // Image rows are recorded at cost 0, so a paid public provider would bypass
+  // spend caps: only vpc (self-hosted) providers may serve this route.
+  it("refuses a public provider", async () => {
     mockGetProviderConfig.mockResolvedValue({
       ...imageBox,
       provider: "openai",
       keys: ["sk-test"],
       settings: {},
     });
-    globalFetch.mockResolvedValue(imageResponse());
 
     const res = await generate(
       {},
       { body: { model: "openai/gpt-image-1", prompt: "a cat" } },
     );
+    const body = (await res.json()) as { error: { code: string } };
 
-    expect(res.status).toBe(200);
-    expect(globalFetch.mock.calls[0][0]).toBe(
-      "https://api.openai.com/v1/images/generations",
-    );
+    expect(res.status).toBe(400);
+    expect(body.error.code).toBe("unsupported_provider");
+    expect(globalFetch).not.toHaveBeenCalled();
+    expect(mockCheckRateLimits).not.toHaveBeenCalled();
   });
 });
 
