@@ -140,6 +140,7 @@ describe("resolveFetcher", () => {
     ["modelsPath", "/v1/models/../../admin"],
     ["embeddingsPath", "/v1/embeddings?x=1"],
     ["chatCompletionPath", "/v1/chat/completions/extra"],
+    ["imagesPath", "/v1/images/edits"], // [fork] W12
   ])("rejects %s = %s", (key, value) => {
     expectNotConfigured(
       () => resolveFetcher(env, { ...vpc, [key]: value }, ORG),
@@ -187,6 +188,7 @@ describe("assertVpcUrl", () => {
     "http://127.0.0.1:11435/v1/chat/completions",
     "http://127.0.0.1:11435/v1/models",
     "http://127.0.0.1:11435/v1/embeddings",
+    "http://127.0.0.1:11436/v1/images/generations", // [fork] W12
   ])("accepts %s", (url) => {
     expect(() => assertVpcUrl(url)).not.toThrow();
   });
@@ -194,6 +196,7 @@ describe("assertVpcUrl", () => {
   it.each([
     "http://127.0.0.1:11435/chat/completions",
     "http://127.0.0.1:11435/v1/admin",
+    "http://127.0.0.1:11436/v1/images/edits", // [fork] W12
     "http://127.0.0.1:11435/v1/models?x=1",
     "http://127.0.0.1:11435/v1/models#x",
     "http://127.0.0.1:11435/v1/%2e%2e/admin",
@@ -204,5 +207,18 @@ describe("assertVpcUrl", () => {
     "not a url",
   ])("rejects %s", (url) => {
     expect(() => assertVpcUrl(url)).toThrow(TransportNotConfiguredError);
+  });
+});
+
+// [fork] W12
+describe("resolveFetcher with an images path", () => {
+  it("accepts imagesPath = /v1/images/generations", () => {
+    expect(
+      resolveFetcher(
+        env,
+        { ...vpc, imagesPath: "/v1/images/generations" },
+        ORG,
+      ),
+    ).toBe(binding);
   });
 });

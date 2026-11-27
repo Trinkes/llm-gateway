@@ -13,6 +13,7 @@ const VPC_PATHS: Record<string, string> = {
   chatCompletionPath: "/v1/chat/completions",
   modelsPath: "/v1/models",
   embeddingsPath: "/v1/embeddings",
+  imagesPath: "/v1/images/generations", // [fork] W12
 };
 const VPC_ALLOWED_PATHS = new Set(Object.values(VPC_PATHS));
 

@@ -13,6 +13,7 @@ export class V1OpenAICompatibleClient {
   private readonly chatCompletionPath: string;
   private readonly modelsPath: string;
   private readonly embeddingsPath: string;
+  private readonly imagesPath: string; // [fork] W12
   private readonly keys: string[];
   private readonly needsKey: boolean;
   private readonly extraHeaders: Record<string, string>;
@@ -27,6 +28,7 @@ export class V1OpenAICompatibleClient {
     chatCompletionPath?: string;
     modelsPath?: string;
     embeddingsPath?: string;
+    imagesPath?: string; // [fork] W12
     keys: string[];
     rotationStrategy?: KeyRotationStrategy;
     custom?: {
@@ -35,6 +37,7 @@ export class V1OpenAICompatibleClient {
       chatCompletionPath?: string;
       modelsPath?: string;
       embeddingsPath?: string;
+      imagesPath?: string; // [fork] W12
     };
     authHeaders?: Record<string, string>;
     /** [fork] W1: send requests through this binding instead of global fetch. */
@@ -78,6 +81,11 @@ export class V1OpenAICompatibleClient {
       options.embeddingsPath ??
       spec?.embeddingsPath ??
       (isCustom ? "/v1/embeddings" : "/embeddings");
+    // [fork] W12
+    this.imagesPath =
+      options.custom?.imagesPath ??
+      options.imagesPath ??
+      (isCustom ? "/v1/images/generations" : "/images/generations");
     this.extraHeaders = {};
     this.authHeaders = options.authHeaders;
     this.rotationStrategy = options.rotationStrategy ?? "first";
@@ -167,6 +175,18 @@ export class V1OpenAICompatibleClient {
     init?: { signal?: AbortSignal },
   ): Promise<Response> {
     return this.request(this.embeddingsPath, {
+      method: "POST",
+      body,
+      signal: init?.signal,
+    });
+  }
+
+  /** [fork] W12: OpenAI-compatible `POST images/generations`. */
+  async imageGenerations(
+    body: string,
+    init?: { signal?: AbortSignal },
+  ): Promise<Response> {
+    return this.request(this.imagesPath, {
       method: "POST",
       body,
       signal: init?.signal,

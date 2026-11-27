@@ -906,6 +906,34 @@ describe("VPC transport settings", () => {
     expect(body.error).toContain("VPC_BINDINGS");
     expect(mockFetchProviderModels).not.toHaveBeenCalled();
   });
+
+  // [fork] W12
+  it("keeps an absolute imagesPath", async () => {
+    mockSaveProviderConfig.mockResolvedValue(
+      config({ provider: "local-m5", keys: [], settings: vpcSettings }),
+    );
+    const settings = { ...vpcSettings, imagesPath: "/v1/images/generations" };
+    const { status } = await send("PUT", "/api/providers/local-m5", {
+      settings,
+    });
+    expect(status).toBe(200);
+    expect(mockSaveProviderConfig.mock.calls[0][3].settings).toMatchObject({
+      imagesPath: "/v1/images/generations",
+    });
+  });
+
+  it.each(["v1/images/generations", 42])(
+    "rejects imagesPath = %s",
+    async (imagesPath) => {
+      const { status, body } = await send("PUT", "/api/providers/local-m5", {
+        settings: { ...vpcSettings, imagesPath },
+      });
+      expect(status).toBe(400);
+      expect(body.error).toContain(
+        "settings.imagesPath must be an absolute path",
+      );
+    },
+  );
 });
 
 // [fork] W3: injectBody provider setting.

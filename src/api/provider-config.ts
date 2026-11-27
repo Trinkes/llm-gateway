@@ -113,7 +113,8 @@ function validateSettings(settings: unknown): Record<string, unknown> {
     if (
       key === "chatCompletionPath" ||
       key === "modelsPath" ||
-      key === "embeddingsPath"
+      key === "embeddingsPath" ||
+      key === "imagesPath" // [fork] W12
     ) {
       if (typeof value !== "string" || !value.startsWith("/")) {
         throw new Error(`settings.${key} must be an absolute path`);
