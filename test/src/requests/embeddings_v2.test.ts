@@ -6,10 +6,12 @@ import { recordChatRequest } from "~/src/metrics/request-logger";
 import { embeddingsV2 } from "~/src/requests/embeddings_v2";
 import type { ApiKeyAuth } from "~/src/types";
 
+const tenant = vi.hoisted(() => ({ settings: {} as Record<string, unknown> }));
+
 vi.mock("~/src/db/tenant", () => ({
   TenantService: class {
     async getSettings() {
-      return {};
+      return tenant.settings;
     }
   },
 }));
@@ -43,14 +45,17 @@ const openai: DecryptedProviderConfig = {
 
 const pending: Promise<unknown>[] = [];
 
-function embed(body: unknown = { model: "openai/text-embed", input: "hi" }) {
+function embed(
+  body: unknown = { model: "openai/text-embed", input: "hi" },
+  apiKeyAuth: ApiKeyAuth = auth,
+) {
   return embeddingsV2({
     request: new Request("https://gw.test/v1/embeddings", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: typeof body === "string" ? body : JSON.stringify(body),
     }),
     env: {} as Env,
-    apiKeyAuth: auth,
+    apiKeyAuth,
     ctx: { waitUntil: (p) => void pending.push(p) },
   });
 }
@@ -67,6 +72,7 @@ describe("embeddingsV2 recording", () => {
     vi.clearAllMocks();
     mockGetProviderConfig.mockResolvedValue(openai);
     pending.length = 0;
+    tenant.settings = {};
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -179,5 +185,125 @@ describe("embeddingsV2 recording", () => {
 
     expect(res.status).toBe(400);
     expect(mockRecord).not.toHaveBeenCalled();
+  });
+
+  it("defaults the content type to JSON when upstream sends none", async () => {
+    upstream(new Response(new Uint8Array([123, 125])));
+
+    const res = await embed();
+
+    expect(res.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("passes a custom base URL and embeddings path to the client", async () => {
+    mockGetProviderConfig.mockResolvedValue({
+      ...openai,
+      settings: {
+        baseUrl: "http://emb.test",
+        embeddingsPath: "/v1/embed",
+      },
+    });
+    const fetchSpy = upstream(new Response("{}"));
+
+    await embed();
+
+    expect(fetchSpy.mock.calls[0][0]).toBe("http://emb.test/v1/embed");
+  });
+});
+
+async function errorOf(res: Response) {
+  const json = (await res.json()) as { error: { code: string } };
+  return [res.status, json.error.code];
+}
+
+describe("embeddingsV2 validation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetProviderConfig.mockResolvedValue(openai);
+    tenant.settings = {};
+    pending.length = 0;
+  });
+
+  it("rejects a suspended tenant", async () => {
+    tenant.settings = { status: "suspended" };
+    expect(await errorOf(await embed())).toEqual([400, "tenant_suspended"]);
+  });
+
+  it("rejects an unparsable body", async () => {
+    expect(await errorOf(await embed("{nope"))).toEqual([
+      400,
+      "invalid_request_error",
+    ]);
+  });
+
+  it("rejects a missing or non-string model", async () => {
+    expect(await errorOf(await embed({ model: 5 }))).toEqual([
+      400,
+      "invalid_request_error",
+    ]);
+  });
+
+  it("rejects a bare model without a bound provider", async () => {
+    expect(await errorOf(await embed({ model: "text-embed" }))).toEqual([
+      400,
+      "invalid_request_error",
+    ]);
+  });
+
+  it("rejects a provider/ prefix with no model", async () => {
+    expect(await errorOf(await embed({ model: "openai/" }))).toEqual([
+      400,
+      "invalid_request_error",
+    ]);
+  });
+
+  it("resolves a bare model through the key's bound provider", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    const bound = {
+      ...auth,
+      scopes: { defaultProvider: "openai" },
+    } as unknown as ApiKeyAuth;
+
+    const res = await embed({ model: "text-embed" }, bound);
+    await Promise.all(pending);
+
+    expect(res.status).toBe(200);
+    expect(mockRecord.mock.calls[0][1]).toMatchObject({
+      provider: "openai",
+      model: "text-embed",
+    });
+    vi.restoreAllMocks();
+  });
+
+  it("rejects a provider outside the key's scopes", async () => {
+    const scoped = {
+      ...auth,
+      scopes: { providers: ["other"] },
+    } as unknown as ApiKeyAuth;
+    expect(await errorOf(await embed(undefined, scoped))).toEqual([
+      400,
+      "provider_not_allowed",
+    ]);
+  });
+
+  it("rejects an unconfigured provider", async () => {
+    mockGetProviderConfig.mockResolvedValue(null as never);
+    expect(await errorOf(await embed())).toEqual([400, "not_configured"]);
+  });
+
+  it("rejects a disabled provider", async () => {
+    mockGetProviderConfig.mockResolvedValue({ ...openai, enabled: false });
+    expect(await errorOf(await embed())).toEqual([400, "provider_disabled"]);
+  });
+
+  it("rejects a provider that is not OpenAI-compatible", async () => {
+    expect(
+      await errorOf(await embed({ model: "anthropic/claude", input: "x" })),
+    ).toEqual([400, "unsupported_provider"]);
+  });
+
+  it("rejects a model outside the allowlist", async () => {
+    tenant.settings = { modelAllowlist: ["openai/other"] };
+    expect(await errorOf(await embed())).toEqual([400, "model_not_allowed"]);
   });
 });

@@ -167,6 +167,22 @@ describe("imageGenerationsV2", () => {
     expect(mockRecord.mock.calls[0][2]).toMatchObject({ units });
   });
 
+  it("records units only for successful generations", async () => {
+    const binding = {
+      fetch: vi.fn().mockResolvedValue(new Response("boom", { status: 500 })),
+    };
+
+    await generate(boxEnv(binding), {
+      body: { model: "local-box/z-image-turbo", prompt: "a cat", n: 3 },
+    });
+    await settled();
+
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 500,
+      units: null,
+    });
+  });
+
   it("logs instead of failing when the request row cannot be written", async () => {
     mockRecord.mockRejectedValueOnce(new Error("d1 down"));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});

@@ -1,6 +1,5 @@
 import { TenantService } from "../db/tenant";
 import { getProviderConfig } from "../llm/credential-store";
-import { resolveDefaultModel } from "../llm/model-catalog";
 import {
   assertModelAllowed,
   assertProviderAllowed,
@@ -68,12 +67,7 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
       `Provider '${provider}' does not support OpenAI embeddings`,
     );
   }
-  const resolvedModel = model || resolveDefaultModel(config.settings, provider);
-  if (!resolvedModel)
-    return errorBody(
-      "not_configured",
-      `Provider '${provider}' has no default model configured`,
-    );
+  const resolvedModel = model;
   const modelError = assertModelAllowed(
     settings,
     apiKeyAuth.scopes,
@@ -105,6 +99,7 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
     model: resolvedModel,
     method: "embedding",
   };
+  // [fork] W17
   const record = (outcome: Parameters<typeof recordChatRequest>[2]) =>
     ctx.waitUntil(
       recordChatRequest(env, attempt, outcome).catch((err) =>

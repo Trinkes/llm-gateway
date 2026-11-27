@@ -199,7 +199,8 @@ export async function imageGenerationsV2(
       recordChatRequest(env, attempt, {
         statusCode,
         costUsd: 0,
-        units: imageCount(body.n), // [fork] W17
+        // [fork] W17: a failed request produced no images.
+        units: statusCode < 400 ? imageCount(body.n) : null,
         ...(errorMessage ? { errorMessage } : {}),
       }).catch((err) => console.error("failed to record image metrics", err)),
     );
