@@ -33,6 +33,7 @@ describe("imageOutputTokens", () => {
   it("defaults to a 1024x1024 high image", () => {
     expect(imageOutputTokens({})).toBe(4160);
     expect(imageOutputTokens({ size: "auto", quality: "auto" })).toBe(4160);
+    expect(imageOutputTokens({ size: null })).toBe(4160);
   });
 
   it.each([
@@ -66,7 +67,7 @@ describe("imageOutputTokens", () => {
 });
 
 describe("isPriceableSize", () => {
-  it.each([undefined, "auto", "1024x1024", "1536x1024", "512x512"])(
+  it.each([undefined, null, "auto", "1024x1024", "1536x1024", "512x512"])(
     "accepts %j",
     (size) => {
       expect(isPriceableSize(size)).toBe(true);
@@ -77,7 +78,6 @@ describe("isPriceableSize", () => {
     "1024 X 1024",
     "big",
     42,
-    null,
     "0x1024",
     "",
     "9".repeat(400) + "x1",
