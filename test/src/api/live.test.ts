@@ -136,12 +136,32 @@ describe("GET /api/live", () => {
     expect(t.at(-1)!.ts).toBeGreaterThan(NOW - 10);
   });
 
+  it("carries per-model activity for the org's vpc providers", async () => {
+    const { body } = await get({ VPC_BINDINGS: `HALOGEN:${ORG}` });
+    const [chat] = body.snapshot.models;
+    expect(body.snapshot.models).toHaveLength(1);
+    expect(chat).toMatchObject({
+      provider: "local-m5",
+      kind: "chat",
+      unit: "tokens",
+      label: "local-m5 · Chat",
+      requests: 2,
+      errors: 0,
+      latencyAvgMs: 900,
+      tokensOutput: 1380,
+    });
+    expect(chat.busy).toHaveLength(60);
+    expect(chat.busy[1].ts - chat.busy[0].ts).toBe(10);
+  });
+
   it("counts finished requests still waiting in the metrics buffer", async () => {
     const decodeTokens = (b: { snapshot: LiveSnapshot }) =>
       b.snapshot.throughput.reduce((s, p) => s + p.decodeTps * 10, 0);
-    const before = decodeTokens(
-      (await get({ VPC_BINDINGS: `HALOGEN:${ORG}` })).body,
-    );
+    const requests = (b: { snapshot: LiveSnapshot }) =>
+      b.snapshot.models.reduce((s, m) => s + m.requests, 0);
+    const first = (await get({ VPC_BINDINGS: `HALOGEN:${ORG}` })).body;
+    const before = decodeTokens(first);
+    const requestsBefore = requests(first);
 
     const buffer = env.METRICS_BUFFER.get(
       env.METRICS_BUFFER.idFromName(metricsBufferName(ORG)),
@@ -169,10 +189,10 @@ describe("GET /api/live", () => {
       },
     ]);
 
-    const after = decodeTokens(
-      (await get({ VPC_BINDINGS: `HALOGEN:${ORG}` })).body,
-    );
+    const second = (await get({ VPC_BINDINGS: `HALOGEN:${ORG}` })).body;
+    const after = decodeTokens(second);
     expect(after - before).toBeCloseTo(500, 5);
+    expect(requests(second) - requestsBefore).toBe(1);
     await buffer.flush();
   });
 
@@ -212,6 +232,7 @@ describe("GET /api/live", () => {
     const body = (await res.json()) as { snapshot: LiveSnapshot };
     expect(body.snapshot.lastRequest).toBeNull();
     expect(body.snapshot.throughput).toEqual([]);
+    expect(body.snapshot.models).toEqual([]);
   });
 
   // [fork] W17: the last request's kind info lets the dashboard render by unit.

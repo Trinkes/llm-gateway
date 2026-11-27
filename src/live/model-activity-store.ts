@@ -1,7 +1,15 @@
 // [fork] W22: stored 10-minute per-model activity (busy time and request
 // stats per provider and kind), written by the throughput rollup cron so long
 // Live ranges never read raw request rows.
-import { modelKey, spreadBusy, type ModelRequest } from "./model-activity";
+import {
+  finishModels,
+  modelKey,
+  spreadBusy,
+  type BusyPoint,
+  type ModelActivity,
+  type ModelGroup,
+  type ModelRequest,
+} from "./model-activity";
 
 const SAMPLE_S = 10;
 const ROLLUP_S = 600;
@@ -116,4 +124,65 @@ export function modelActivityRollupsStatement(
       WHERE organization_id = ? AND ts >= ? AND ts < ?
       ORDER BY ts, provider, method`,
   ).bind(orgId, from, to);
+}
+
+/**
+ * Stored rollups grouped into `bucketS` buckets of `[from, to)` per (provider,
+ * method): busy is the mean over the bucket (missing rollups count as idle),
+ * busyMax the peak 10 s value, counts and sums added. Current `providers`
+ * without rollups get an idle entry.
+ */
+export function modelsFromRollups(
+  rollups: ModelActivityRollup[],
+  providers: string[],
+  from: number,
+  to: number,
+  bucketS: number,
+): ModelActivity[] {
+  const n = Math.ceil((to - from) / bucketS);
+  const perBucket = bucketS / ROLLUP_S;
+  const zeros = (): BusyPoint[] =>
+    Array.from({ length: n }, (_, i) => ({
+      ts: from + i * bucketS,
+      busy: 0,
+      busyMax: 0,
+    }));
+  const groups = new Map<string, ModelGroup & { latencySum: number }>();
+  for (const r of rollups) {
+    const key = modelKey(r.provider, r.method);
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        provider: r.provider,
+        kind: r.method,
+        busy: zeros(),
+        requests: 0,
+        errors: 0,
+        latencyAvgMs: null,
+        tokensInput: 0,
+        tokensOutput: 0,
+        units: 0,
+        latencySum: 0,
+      };
+      groups.set(key, g);
+    }
+    const point = g.busy[Math.floor((r.ts - from) / bucketS)];
+    if (point) {
+      point.busy += r.busy / perBucket;
+      point.busyMax = Math.max(point.busyMax ?? 0, r.busy_max);
+    }
+    g.requests += r.requests;
+    g.errors += r.errors;
+    g.latencySum += r.latency_ms_sum;
+    g.tokensInput += r.tokens_input;
+    g.tokensOutput += r.tokens_output;
+    g.units += r.units;
+  }
+  const finished: ModelGroup[] = [...groups.values()].map(
+    ({ latencySum, ...g }) => {
+      const ok = g.requests - g.errors;
+      return { ...g, latencyAvgMs: ok > 0 ? latencySum / ok : null };
+    },
+  );
+  return finishModels(finished, providers, zeros());
 }

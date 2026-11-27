@@ -1,7 +1,18 @@
 // [fork] W12: reads of the stored box history for the Live page.
 // Every read is scoped to the bindings the org may use (inferenceBinding /
 // hostBinding) and, for throughput, to the org's own request log or rollups.
-import { providerVpcBinding, vpcProviders } from "./provider-binding";
+import { modelActivity, type ModelActivity } from "./model-activity";
+import {
+  modelActivityRollupsStatement,
+  modelsFromRollups,
+  type ModelActivityRollup,
+} from "./model-activity-store";
+import {
+  providerVpcBinding,
+  toVpcProviders,
+  vpcProviders,
+  vpcProvidersStatement,
+} from "./provider-binding";
 import {
   HOST_COLUMNS,
   INFERENCE_COLUMNS,
@@ -56,6 +67,8 @@ export interface LiveHistory {
   inference: Series<InferenceAvg> | null;
   host: Series<HostAvg> | null;
   throughput: ThroughputSeriesPoint[];
+  /** [fork] W22: per-model busy time and stats over the range. */
+  models: ModelActivity[];
 }
 
 export interface SampleAt {
@@ -230,6 +243,11 @@ export async function queryHistory(
   }
   if (!raw) {
     statements.push(throughputRollupsStatement(env, orgId, from, to));
+    // [fork] W22: providers in the same batch, for idle model rows.
+    statements.push(
+      vpcProvidersStatement(env, orgId),
+      modelActivityRollupsStatement(env, orgId, from, to),
+    );
   }
 
   const results = statements.length ? await env.DB.batch<Raw>(statements) : [];
@@ -245,14 +263,26 @@ export async function queryHistory(
   const hostSeries = series<HostAvg>(HOST, host?.name);
 
   let throughput: ThroughputSeriesPoint[] = [];
+  let models: ModelActivity[] = [];
   if (wantsRequests) {
     const rows = results[next].results as unknown as ThroughputRequest[];
     throughput = spreadThroughput(rows, from, to, SAMPLE_INTERVAL_S).map(
       (p) => ({ ...p, decodeTpsMax: null, prefillTpsMax: null }),
     );
+    models = modelActivity(rows, providers, from, to, SAMPLE_INTERVAL_S);
   } else if (!raw) {
     throughput = rollupGroups(
       results[next].results as unknown as Parameters<typeof rollupGroups>[0],
+      bucketS,
+    );
+    const current = toVpcProviders(env, results[next + 1].results).map(
+      (p) => p.provider,
+    );
+    models = modelsFromRollups(
+      results[next + 2].results as unknown as ModelActivityRollup[],
+      current,
+      from,
+      to,
       bucketS,
     );
   }
@@ -263,6 +293,7 @@ export async function queryHistory(
     inference: inferenceSeries,
     host: hostSeries,
     throughput,
+    models,
   };
 }
 
