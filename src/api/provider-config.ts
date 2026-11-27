@@ -9,6 +9,7 @@ import {
 } from "../llm/credential-store";
 import { parseVertexConfig } from "../llm/google-vertex";
 import { validateInjectBody } from "../llm/inject-body";
+import { validateModelAliases } from "../llm/model-aliases";
 import { defaultModelFor, resolveDefaultModel } from "../llm/model-catalog";
 import {
   getPiAiProviderSpec,
@@ -175,6 +176,10 @@ function validateSettings(settings: unknown): Record<string, unknown> {
     } else if (key === "injectBody") {
       // [fork] W3
       validateInjectBody(value);
+    } else if (key === "modelAliases") {
+      // [fork] W18
+      out[key] = validateModelAliases(value);
+      continue;
     }
     out[key] = value;
   }

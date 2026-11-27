@@ -1,5 +1,6 @@
 import { TenantService } from "../db/tenant";
 import { getProviderConfig } from "../llm/credential-store";
+import { upstreamModelId } from "../llm/model-aliases";
 import { resolveDefaultModel } from "../llm/model-catalog";
 import {
   assertModelAllowed,
@@ -97,7 +98,10 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
   let upstream: Response;
   try {
     upstream = await client.embeddings(
-      JSON.stringify({ ...body, model: resolvedModel }),
+      JSON.stringify({
+        ...body,
+        model: upstreamModelId(config.settings, resolvedModel), // [fork] W18
+      }),
       { signal: request.signal },
     );
   } catch (error) {
