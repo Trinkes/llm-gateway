@@ -1,6 +1,7 @@
 import { ExpiryField } from "../components/ExpiryField";
 import { KeyExpiryCell } from "../components/KeyExpiryCell";
 import { KeyStatusBadge } from "../components/KeyStatusBadge";
+import { ProviderScopeField } from "../components/ProviderScopeField";
 import {
   Badge,
   Button,
@@ -16,6 +17,11 @@ import {
 import { apiGet, apiSend, ApiKeyView, ProviderView } from "../lib/api";
 import { fmtDate } from "../lib/format";
 import { fromLocalInputValue, toLocalInputValue } from "../lib/keyExpiry";
+import {
+  applyProviderSelection,
+  initialProviderSelection,
+  keyProviderIds,
+} from "../lib/keyProviders";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, KeyRound, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -156,10 +162,14 @@ export function ApiKeysPage() {
                       )}
                     </td>
                     <td className="px-5 py-3">
-                      {k.scopes.defaultProvider ? (
-                        <Badge tone="indigo">
-                          {providerName(k.scopes.defaultProvider)}
-                        </Badge>
+                      {keyProviderIds(k.scopes).length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {keyProviderIds(k.scopes).map((id) => (
+                            <Badge key={id} tone="indigo">
+                              {providerName(id)}
+                            </Badge>
+                          ))}
+                        </div>
                       ) : (
                         <span className="text-gray-400">—</span>
                       )}
@@ -302,8 +312,8 @@ function EditKeyModal({
       ? String(apiKey.scopes.spendCapUsd)
       : "",
   );
-  const [defaultProvider, setDefaultProvider] = useState(
-    apiKey.scopes.defaultProvider ?? "",
+  const [providerSelection, setProviderSelection] = useState(
+    initialProviderSelection(apiKey.scopes),
   );
   const [status, setStatus] = useState(apiKey.status);
   const initialExpiry = toLocalInputValue(apiKey.expiresAt);
@@ -313,17 +323,16 @@ function EditKeyModal({
   const submit = async () => {
     setSaving(true);
     try {
-      const scopes: Record<string, unknown> = { ...apiKey.scopes };
+      const scopes: Record<string, unknown> = applyProviderSelection(
+        apiKey.scopes,
+        providerSelection.selected,
+        providerSelection.defaultProvider,
+      );
       const cap = parseFloat(spendCapUsd);
       if (spendCapUsd.trim() !== "" && Number.isFinite(cap) && cap > 0) {
         scopes.spendCapUsd = cap;
       } else {
         delete scopes.spendCapUsd;
-      }
-      if (defaultProvider) {
-        scopes.defaultProvider = defaultProvider;
-      } else {
-        delete scopes.defaultProvider;
       }
 
       await apiSend("PATCH", `/api/keys/${apiKey.id}`, {
@@ -367,21 +376,11 @@ function EditKeyModal({
             onChange={(e) => setName(e.target.value)}
           />
         </div>
-        <div>
-          <Label>Provider (optional, binds the key)</Label>
-          <Select
-            className="w-full"
-            value={defaultProvider}
-            onChange={(v) => setDefaultProvider(v as string)}
-            options={[
-              { value: "", label: "Any provider — requires provider/model" },
-              ...providerOptions,
-            ]}
-          />
-          <p className="mt-1 text-[11px] text-gray-400">
-            Bound keys only route to this provider and accept bare model ids.
-          </p>
-        </div>
+        <ProviderScopeField
+          options={providerOptions}
+          value={providerSelection}
+          onChange={setProviderSelection}
+        />
         <div>
           <Label>Spend cap (USD, optional)</Label>
           <Input
@@ -429,18 +428,23 @@ function CreateKeyModal({
 }) {
   const [name, setName] = useState("");
   const [spendCapUsd, setSpendCapUsd] = useState("");
-  const [defaultProvider, setDefaultProvider] = useState("");
+  const [providerSelection, setProviderSelection] = useState(
+    initialProviderSelection({}),
+  );
   const [expiry, setExpiry] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
     setSaving(true);
     try {
-      const scopes: Record<string, unknown> = {};
+      const scopes: Record<string, unknown> = applyProviderSelection(
+        {},
+        providerSelection.selected,
+        providerSelection.defaultProvider,
+      );
       const cap = parseFloat(spendCapUsd);
       if (spendCapUsd.trim() !== "" && Number.isFinite(cap) && cap > 0)
         scopes.spendCapUsd = cap;
-      if (defaultProvider) scopes.defaultProvider = defaultProvider;
       const expiresAt = fromLocalInputValue(expiry);
       const res = await apiSend<{
         id: string;
@@ -484,19 +488,11 @@ function CreateKeyModal({
             onChange={(e) => setName(e.target.value)}
           />
         </div>
-        <div>
-          <Label>Provider (optional, binds the key)</Label>
-          <Select
-            className="w-full"
-            value={defaultProvider}
-            onChange={(v) => setDefaultProvider(v as string)}
-            options={providerOptions}
-            placeholder="Any provider — requires provider/model"
-          />
-          <p className="mt-1 text-[11px] text-gray-400">
-            Bound keys only route to this provider and accept bare model ids.
-          </p>
-        </div>
+        <ProviderScopeField
+          options={providerOptions}
+          value={providerSelection}
+          onChange={setProviderSelection}
+        />
         <div>
           <Label>Spend cap (USD, optional)</Label>
           <Input

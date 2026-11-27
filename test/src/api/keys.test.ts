@@ -91,7 +91,7 @@ describe("POST /api/keys", () => {
         name: "scoped",
         expiresAt: 9999999999,
         scopes: {
-          providers: ["openai"],
+          providers: ["openai", "google-ai-studio"],
           models: ["gpt-4o"],
           spendCapUsd: 25,
           defaultProvider: "google",
@@ -99,9 +99,24 @@ describe("POST /api/keys", () => {
       }),
     });
     expect(status).toBe(201);
-    expect(body.scopes.providers).toEqual(["openai"]);
+    expect(body.scopes.providers).toEqual(["openai", "google-ai-studio"]);
     expect(body.scopes.defaultProvider).toBe("google-ai-studio");
     expect(body.expiresAt).toBe(9999999999);
+  });
+
+  // [fork] W16
+  it("rejects a default provider outside the key's provider list", async () => {
+    const app = buildApp();
+    const { status, body } = await fetchJson(app, "/api/keys", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "scoped",
+        scopes: { providers: ["openai"], defaultProvider: "anthropic" },
+      }),
+    });
+    expect(status).toBe(400);
+    expect(JSON.stringify(body)).toContain("defaultProvider must be one of");
   });
 
   it("rejects an unknown scopes.defaultProvider", async () => {

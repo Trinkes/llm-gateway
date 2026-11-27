@@ -24,6 +24,7 @@ import {
   assertModelAllowed,
   assertProviderAllowed,
   assertTenantActive,
+  keyMayUseProvider,
 } from "../llm/policy";
 import {
   canonicalProviderName,
@@ -225,9 +226,10 @@ export async function chatCompletionsV2(
   const rawModel =
     typeof chatBody.model === "string" ? chatBody.model.trim() : "";
 
-  // An API key may be bound to a provider (scopes.defaultProvider): the key
-  // then only ever routes to that provider and users can send bare model ids.
-  // Unbound keys must name the provider explicitly (`provider/model`).
+  // An API key may be bound to a provider (scopes.defaultProvider): bare model
+  // ids then go to that provider, and the key reaches only that provider plus
+  // any it lists in scopes.providers ([fork] W16). Unbound keys must name the
+  // provider explicitly (`provider/model`).
   const boundProvider = apiKeyAuth.scopes.defaultProvider
     ? canonicalProviderName(apiKeyAuth.scopes.defaultProvider)
     : undefined;
@@ -239,14 +241,16 @@ export async function chatCompletionsV2(
     const parsed = parseModelString(rawModel);
     if (
       parsed.provider &&
-      canonicalProviderName(parsed.provider) !== boundProvider
+      !keyMayUseProvider(apiKeyAuth.scopes, parsed.provider)
     ) {
       return errorBody(
         "provider_mismatch",
         `API key is bound to provider '${boundProvider}'; cannot use '${parsed.provider}'`,
       );
     }
-    providerName = boundProvider;
+    providerName = parsed.provider
+      ? canonicalProviderName(parsed.provider)
+      : boundProvider;
     modelId = parsed.model;
   } else {
     if (!rawModel) {

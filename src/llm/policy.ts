@@ -1,5 +1,6 @@
 import type { TenantSettings } from "../db/tenant";
 import type { ApiKeyScopes } from "../types";
+import { canonicalProviderName } from "./provider-registry";
 
 export type PolicyError =
   | { status: 403; code: "tenant_suspended"; message: string }
@@ -80,4 +81,30 @@ export function assertModelAllowed(
     };
   }
   return undefined;
+}
+
+function sameProvider(a: string, b: string): boolean {
+  return (
+    canonicalProviderName(a).toLowerCase() ===
+    canonicalProviderName(b).toLowerCase()
+  );
+}
+
+/**
+ * [fork] W16: whether an API key may name `provider` explicitly. A key with a
+ * provider list may use exactly those; otherwise a key bound to a provider
+ * (scopes.defaultProvider) may use only that one; an unscoped key may use any.
+ * The default provider only resolves bare model ids.
+ */
+export function keyMayUseProvider(
+  scopes: ApiKeyScopes | undefined,
+  provider: string,
+): boolean {
+  if (scopes?.providers && scopes.providers.length > 0) {
+    return scopes.providers.some((p) => sameProvider(p, provider));
+  }
+  if (scopes?.defaultProvider) {
+    return sameProvider(scopes.defaultProvider, provider);
+  }
+  return true;
 }

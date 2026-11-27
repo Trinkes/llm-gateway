@@ -41,8 +41,11 @@ function localBox(settings: Record<string, unknown>): DecryptedProviderConfig {
   };
 }
 
-async function listedIds(env: object): Promise<string[]> {
-  const res = await modelsV2({ env: env as Env, apiKeyAuth });
+async function listedIds(
+  env: object,
+  auth: ApiKeyAuth = apiKeyAuth,
+): Promise<string[]> {
+  const res = await modelsV2({ env: env as Env, apiKeyAuth: auth });
   const body = (await res.json()) as { data: { id: string }[] };
   return body.data.map((m) => m.id);
 }
@@ -89,5 +92,48 @@ describe("modelsV2 with a vpc provider", () => {
 
     expect(ids).toEqual([]);
     expect(globalFetch).not.toHaveBeenCalled();
+  });
+});
+
+// [fork] W16: a bound key lists its default provider plus the ones it lists.
+describe("modelsV2 for a key with several providers", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("lists every provider the key may use", async () => {
+    const image = { ...localBox({}), provider: "local-img", name: "local-img" };
+    const other = {
+      ...localBox({}),
+      provider: "local-other",
+      name: "local-other",
+    };
+    mockListProviderConfigs.mockResolvedValue([
+      localBox({ customModels: ["chat-model"] }),
+      {
+        ...image,
+        settings: { ...image.settings, customModels: ["img-model"] },
+      },
+      {
+        ...other,
+        settings: { ...other.settings, customModels: ["other-model"] },
+      },
+    ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("{}", { status: 404 })),
+    );
+    const auth = {
+      ...apiKeyAuth,
+      scopes: {
+        defaultProvider: "local-m5",
+        providers: ["local-m5", "local-img"],
+      },
+    } as unknown as ApiKeyAuth;
+
+    const ids = await listedIds({}, auth);
+
+    expect(ids).toEqual(
+      expect.arrayContaining(["local-m5/chat-model", "local-img/img-model"]),
+    );
+    expect(ids.some((id) => id.startsWith("local-other/"))).toBe(false);
   });
 });

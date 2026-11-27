@@ -21,6 +21,7 @@ import {
   fmtUsd,
   fmtUsdPrecise,
 } from "../lib/format";
+import { keyProviderIds } from "../lib/keyProviders";
 import { ALL_RANGES, fillBuckets } from "../lib/timeRange";
 import { useTimeRange } from "../lib/useTimeRange";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -224,7 +225,10 @@ export function ApiKeyDetailPage() {
               )}
             </ScopeRow>
             <ScopeRow label="Allowed providers">
-              <ScopeList values={scopes.providers} empty="All providers" />
+              <ScopeList
+                values={keyProviderIds(scopes)}
+                empty="All providers"
+              />
             </ScopeRow>
             <ScopeRow label="Allowed models">
               <ScopeList values={scopes.models} empty="All models" />

@@ -1,5 +1,6 @@
 import type { AppBindings } from "../app";
 import { auditLog } from "../audit/audit-logger";
+import { keyMayUseProvider } from "../llm/policy";
 import {
   canonicalProviderName,
   isCustomProviderName,
@@ -74,6 +75,15 @@ function validateScopes(scopes: unknown): ApiKeyScopes {
       );
     }
     out.defaultProvider = canonicalProviderName(input.defaultProvider);
+  }
+  // [fork] W16: bare model ids go to the default provider, so it must be one
+  // the key may use.
+  if (
+    out.defaultProvider &&
+    out.providers?.length &&
+    !keyMayUseProvider({ providers: out.providers }, out.defaultProvider)
+  ) {
+    throw new Error("scopes.defaultProvider must be one of scopes.providers");
   }
   return out;
 }

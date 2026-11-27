@@ -233,6 +233,35 @@ describe("tenant prefix routing", () => {
     expect((await bare.json()).error.message).toMatch(/openai/i);
   });
 
+  // [fork] W16
+  it("lets a bound key use another provider it lists", async () => {
+    await insertOrg("org_root", { isRoot: true });
+    await insertKey("k_multi", "org_root", "sk_multi", {
+      defaultProvider: "openai",
+      providers: ["openai", "anthropic"],
+    });
+
+    const listed = await chat(
+      "/v1/chat/completions",
+      "sk_multi",
+      "anthropic/claude",
+    );
+    expect(listed.status).toBe(400); // routed to anthropic, which is not configured
+    expect((await listed.json()).error.message).toMatch(/anthropic/i);
+
+    const unlisted = await chat(
+      "/v1/chat/completions",
+      "sk_multi",
+      "groq/llama",
+    );
+    expect(unlisted.status).toBe(403);
+    expect((await unlisted.json()).error.message).toMatch(/bound to provider/);
+
+    const bare = await chat("/v1/chat/completions", "sk_multi", "gpt-4o");
+    expect(bare.status).toBe(400); // default provider openai, not configured
+    expect((await bare.json()).error.message).toMatch(/openai/i);
+  });
+
   it("rejects a bare model id for an unbound key", async () => {
     await insertOrg("org_root", { isRoot: true });
     await insertKey("k_root", "org_root", "sk_root");
