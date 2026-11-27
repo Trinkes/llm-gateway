@@ -336,6 +336,10 @@ providerConfigRouter.put("/:provider", async (c) => {
     if ("trace" in settings && typeof settings.trace !== "boolean") {
       throw new Error("settings.trace must be a boolean");
     }
+    // [fork] W20: gates /v1/images/edits (an upstream may crash on edits).
+    if ("imageEdits" in settings && typeof settings.imageEdits !== "boolean") {
+      throw new Error("settings.imageEdits must be a boolean");
+    }
     // [fork] W1: only orgs allowlisted in VPC_BINDINGS may save a vpc provider.
     resolveFetcher(c.env, settings, orgId);
   } catch (err) {

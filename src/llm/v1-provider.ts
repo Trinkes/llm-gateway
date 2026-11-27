@@ -100,9 +100,13 @@ export class V1OpenAICompatibleClient {
     return [...this.keys.slice(start), ...this.keys.slice(0, start)];
   }
 
-  private headers(key?: string): Record<string, string> {
+  private headers(
+    key?: string,
+    contentType: string | null = "application/json",
+  ): Record<string, string> {
     const headers: Record<string, string> = {
-      "content-type": "application/json",
+      // [fork] W20: null leaves it to fetch (a FormData body sets its boundary).
+      ...(contentType ? { "content-type": contentType } : {}),
       ...this.extraHeaders,
       ...(this.authHeaders ?? {}),
     };
@@ -122,8 +126,14 @@ export class V1OpenAICompatibleClient {
 
   private async request(
     path: string,
-    init: { method: string; body?: string; signal?: AbortSignal },
+    init: {
+      method: string;
+      body?: BodyInit;
+      signal?: AbortSignal;
+      contentType?: string | null; // [fork] W20
+    },
   ): Promise<Response> {
+    const { contentType, ...fetchInit } = init;
     const keys = this.keyOrder();
     const attempts =
       this.rotationStrategy === "first" ? keys.slice(0, 1) : keys;
@@ -135,8 +145,8 @@ export class V1OpenAICompatibleClient {
       const response = await (this.fetcher ?? globalThis).fetch(
         this.fullUrl(path),
         {
-          ...init,
-          headers: this.headers(attempts[index]),
+          ...fetchInit,
+          headers: this.headers(attempts[index], contentType),
         },
       );
       lastResponse = response;
@@ -190,6 +200,24 @@ export class V1OpenAICompatibleClient {
       method: "POST",
       body,
       signal: init?.signal,
+    });
+  }
+
+  /**
+   * [fork] W20: `POST` any body to a fixed upstream path (the passthrough
+   * routes in vpc_passthrough_v2.ts). `contentType: null` lets fetch set it, which a
+   * multipart body needs for its boundary.
+   */
+  async post(
+    path: string,
+    body: BodyInit,
+    init?: { signal?: AbortSignal; contentType?: string | null },
+  ): Promise<Response> {
+    return this.request(path, {
+      method: "POST",
+      body,
+      signal: init?.signal,
+      contentType: init?.contentType,
     });
   }
 

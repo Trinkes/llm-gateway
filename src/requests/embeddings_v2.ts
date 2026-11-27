@@ -5,11 +5,13 @@ import {
   assertModelAllowed,
   assertProviderAllowed,
   assertTenantActive,
+  keyMayUseProvider,
 } from "../llm/policy";
 import {
   canonicalProviderName,
   isOpenAICompatibleProvider,
 } from "../llm/provider-registry";
+import { resolveFetcher, type UpstreamFetcher } from "../llm/transport";
 import { V1OpenAICompatibleClient } from "../llm/v1-provider";
 import { recordChatRequest, type ChatAttempt } from "../metrics/request-logger";
 import { ApiKeyAuth } from "../types";
@@ -47,6 +49,14 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
   if (!provider || !model) {
     return errorBody("invalid_request_error", "model must be provider/model");
   }
+  // [fork] W20: a bound key reaches its provider plus any it lists (as chat).
+  if (boundProvider && !keyMayUseProvider(apiKeyAuth.scopes, provider)) {
+    return errorBody(
+      "provider_mismatch",
+      `API key is bound to provider '${boundProvider}'; cannot use '${provider}'`,
+      403,
+    );
+  }
   const providerError = assertProviderAllowed(
     settings,
     apiKeyAuth.scopes,
@@ -76,10 +86,19 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
   );
   if (modelError) return errorBody(modelError.code, modelError.message);
 
+  // [fork] W20: a vpc provider is reached through its binding, like chat.
+  let fetcher: UpstreamFetcher | undefined;
+  try {
+    fetcher = resolveFetcher(env, config.settings, organizationId);
+  } catch (err) {
+    return errorBody("not_configured", (err as Error).message);
+  }
+
   const client = new V1OpenAICompatibleClient({
     provider,
     keys: config.keys,
     rotationStrategy: config.settings.rotationStrategy,
+    fetcher,
     custom:
       config.settings.baseUrl || config.settings.accountId
         ? {
@@ -158,11 +177,11 @@ function promptTokens(text: string): number {
   }
 }
 
-function errorBody(code: string, message: string): Response {
+function errorBody(code: string, message: string, status?: number): Response {
   return new Response(
     JSON.stringify({ error: { message, type: code, code } }),
     {
-      status: code === "upstream_error" ? 502 : 400,
+      status: status ?? (code === "upstream_error" ? 502 : 400),
       headers: { "Content-Type": "application/json" },
     },
   );

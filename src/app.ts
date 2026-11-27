@@ -25,6 +25,12 @@ import { chatCompletionsV2 } from "./requests/chat_completions_v2";
 import { embeddingsV2 } from "./requests/embeddings_v2";
 import { imageGenerationsV2 } from "./requests/image_generations_v2";
 import { modelsV2 } from "./requests/models_v2";
+import {
+  audioSpeechV2,
+  audioTranscriptionsV2,
+  imageEditsV2,
+  systemoneV2,
+} from "./requests/vpc_passthrough_v2";
 import { AppVariables } from "./types";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -264,6 +270,31 @@ export function createApp(): Hono<AppBindings> {
       tenantPrefixGuardMiddleware,
       imageGenerations,
     );
+  }
+
+  // [fork] W20: passthrough routes to self-hosted vpc providers.
+  for (const [route, handler] of [
+    ["images/edits", imageEditsV2],
+    ["audio/transcriptions", audioTranscriptionsV2],
+    ["audio/speech", audioSpeechV2],
+    ["systemone", systemoneV2],
+  ] as const) {
+    const serve = (c: import("hono").Context<AppBindings>) =>
+      handler({
+        request: c.req.raw,
+        env: c.env,
+        apiKeyAuth: c.get("apiKeyAuth")!,
+        ctx: c.executionCtx,
+      });
+    for (const path of [`/v1/${route}`, `/:tenantPrefix/v1/${route}`]) {
+      app.post(
+        path,
+        tenantPrefixMiddleware,
+        apiKeyAuthMiddleware,
+        tenantPrefixGuardMiddleware,
+        serve,
+      );
+    }
   }
 
   app.get(

@@ -14,6 +14,11 @@ const VPC_PATHS: Record<string, string> = {
   modelsPath: "/v1/models",
   embeddingsPath: "/v1/embeddings",
   imagesPath: "/v1/images/generations", // [fork] W15
+  // [fork] W20: fixed paths of the passthrough routes (vpc_passthrough_v2.ts).
+  imageEditsPath: "/v1/images/edits",
+  transcriptionsPath: "/v1/audio/transcriptions",
+  speechPath: "/v1/audio/speech",
+  systemonePath: "/v1/systemone",
 };
 const VPC_ALLOWED_PATHS = new Set(Object.values(VPC_PATHS));
 
