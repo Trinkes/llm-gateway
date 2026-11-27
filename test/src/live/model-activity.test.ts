@@ -5,6 +5,7 @@ import {
   spreadBusy,
   type ModelRequest,
 } from "~/src/live/model-activity";
+import { rollupModelActivity } from "~/src/live/model-activity-store";
 
 function row(over: Partial<ModelRequest> = {}): ModelRequest {
   return {
@@ -135,5 +136,24 @@ describe("modelActivity", () => {
     expect(
       modelActivity(rows, [], 100, 140, 10).map((m) => m.provider),
     ).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("grouping cost", () => {
+  // A day of batch-embedding traffic on one model: grouping must stay linear.
+  const many = Array.from({ length: 40_000 }, (_, i) =>
+    row({ timestamp: 100 + (i % 86_000), latency_ms: 200 }),
+  );
+
+  it("modelActivity groups 40k rows of one model quickly", () => {
+    const t0 = performance.now();
+    modelActivity(many, [], 0, 86_400, 600);
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+
+  it("rollupModelActivity groups 40k rows of one model quickly", () => {
+    const t0 = performance.now();
+    rollupModelActivity(many, 0, 86_400);
+    expect(performance.now() - t0).toBeLessThan(200);
   });
 });

@@ -47,18 +47,27 @@ export function rollupModelActivity(
   const byKey = new Map<string, ModelRequest[]>();
   for (const r of rows) {
     const key = modelKey(r.provider, r.method);
-    byKey.set(key, [...(byKey.get(key) ?? []), r]);
+    const group = byKey.get(key);
+    if (group) group.push(r);
+    else byKey.set(key, [r]);
   }
   const perBucket = ROLLUP_S / SAMPLE_S;
   const buckets = Math.ceil((to - from) / ROLLUP_S);
   return [...byKey.values()].flatMap((group) => {
     const busy10s = spreadBusy(group, from, to, SAMPLE_S);
+    // Rows by the bucket they finished in, in one pass.
+    const finishedIn: ModelRequest[][] = Array.from(
+      { length: buckets },
+      () => [],
+    );
+    for (const r of group) {
+      const b = Math.floor((r.timestamp - from) / ROLLUP_S);
+      if (b >= 0 && b < buckets) finishedIn[b].push(r);
+    }
     return Array.from({ length: buckets }, (_, b) => {
       const ts = from + b * ROLLUP_S;
       const slots = busy10s.slice(b * perBucket, (b + 1) * perBucket);
-      const finished = group.filter(
-        (r) => r.timestamp >= ts && r.timestamp < ts + ROLLUP_S,
-      );
+      const finished = finishedIn[b];
       const ok = finished.filter((r) => r.status_code < 400);
       return {
         provider: group[0].provider,

@@ -125,7 +125,9 @@ export function modelActivity(
   const byKey = new Map<string, ModelRequest[]>();
   for (const r of rows) {
     const key = modelKey(r.provider, r.method);
-    byKey.set(key, [...(byKey.get(key) ?? []), r]);
+    const group = byKey.get(key);
+    if (group) group.push(r);
+    else byKey.set(key, [r]);
   }
   const toPoints = (busy: number[]): BusyPoint[] =>
     busy.map((b, i) => ({ ts: from + i * bucketS, busy: b, busyMax: null }));
