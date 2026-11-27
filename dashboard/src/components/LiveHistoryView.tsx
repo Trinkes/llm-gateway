@@ -11,6 +11,7 @@ import {
 } from "../lib/liveChart";
 import { summarize, type HistoryPoint } from "../lib/liveHistory";
 import { LiveGauge } from "./LiveGauge";
+import { LiveModelsCard } from "./LiveModelsCard";
 import { LiveTempChart } from "./LiveTempChart";
 import {
   DECODE_COLOR,
@@ -76,6 +77,8 @@ export function LiveHistoryView({
   return (
     <div className="space-y-6">
       {header(historySubtitle(history.bucketS))}
+
+      <LiveModelsCard models={history.models} domain={domain} />
 
       <Card
         title="Aggregate throughput"

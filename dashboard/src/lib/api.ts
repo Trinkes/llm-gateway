@@ -258,6 +258,32 @@ export interface LiveSnapshot {
   lastRequest: RequestRow | null;
   /** Request throughput of the last 10 minutes, one point per 10 s (idle = 0). */
   throughput: ThroughputPoint[];
+  /** [fork] W22: per-model busy time and stats over the same 10 minutes. */
+  models: ModelActivity[];
+}
+
+// [fork] W22: per-model activity (mirrors src/live/model-activity.ts).
+export interface BusyPoint {
+  ts: number;
+  /** Average requests running during the bucket. */
+  busy: number;
+  /** Peak 10 s value in the bucket; null for single 10 s buckets. */
+  busyMax: number | null;
+}
+
+export interface ModelActivity {
+  provider: string;
+  /** Null for a provider with no requests in the range. */
+  kind: string | null;
+  unit: KindUnit;
+  label: string;
+  busy: BusyPoint[];
+  requests: number;
+  errors: number;
+  latencyAvgMs: number | null;
+  tokensInput: number;
+  tokensOutput: number;
+  units: number;
 }
 
 export interface ThroughputPoint {
@@ -327,6 +353,8 @@ export interface LiveHistory {
   inference: Series<InferenceAvg> | null;
   host: Series<HostAvg> | null;
   throughput: ThroughputSeriesPoint[];
+  /** [fork] W22: per-model busy time and stats over the range. */
+  models: ModelActivity[];
 }
 
 export interface SampleAt {
