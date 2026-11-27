@@ -5,6 +5,7 @@
 // row per request, under its own kind (request-kinds.ts).
 import { imageOutputTokens, isPriceableSize } from "../metrics/image-tokens";
 import { imageCount } from "../metrics/request-kinds";
+import { transcriptionUsage } from "../metrics/transcription-usage";
 import {
   invalid,
   serveVpcRoute,
@@ -132,7 +133,9 @@ const TRANSCRIPTIONS: VpcRouteSpec = {
   what: "transcriptions",
   // Long recordings can take minutes; the JSON reply tolerates leading spaces.
   heartbeat: true,
-  priced: false,
+  // [fork] W21: priced from the reply's `usage` tokens (audio in, text out).
+  priced: true,
+  replyUsage: transcriptionUsage,
   async parse(request): Promise<RouteRequest | Response> {
     const form = await readForm(request);
     if (form instanceof Response) return form;

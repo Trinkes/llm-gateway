@@ -4,9 +4,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getProviderConfig } from "~/src/llm/credential-store";
 import type { DecryptedProviderConfig } from "~/src/llm/credential-store";
-import { checkRateLimits } from "~/src/llm/rate-limit";
+import { checkRateLimits, settleTokenUsage } from "~/src/llm/rate-limit";
 import { getModelPricing } from "~/src/metrics/cost-tracker";
 import { recordChatRequest } from "~/src/metrics/request-logger";
+import { maybeDisableAfterSpend } from "~/src/metrics/spend-guard";
 import {
   audioSpeechV2,
   audioTranscriptionsV2,
@@ -51,6 +52,8 @@ const mockGetProviderConfig = vi.mocked(getProviderConfig);
 const mockCheckRateLimits = vi.mocked(checkRateLimits);
 const mockRecord = vi.mocked(recordChatRequest);
 const mockGetModelPricing = vi.mocked(getModelPricing);
+const mockSettle = vi.mocked(settleTokenUsage);
+const mockMaybeDisable = vi.mocked(maybeDisableAfterSpend);
 
 const auth = {
   keyId: "key_1",
@@ -426,6 +429,190 @@ describe("audioTranscriptionsV2", () => {
       ctx,
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("audioTranscriptionsV2 pricing", () => {
+  // [fork] W21: priced from the reply's `usage` tokens, not stored as tokens.
+  const reply =
+    '{"text":"Olá, bom dia.","usage":{"type":"tokens","input_tokens":69,"output_tokens":29,"total_tokens":98,"input_tokens_details":{"cached_tokens":14}}}';
+  const expectedCost = (69 * 3 + 29 * 5) / 1_000_000;
+
+  beforeEach(() => {
+    mockGetProviderConfig.mockResolvedValue(box());
+    mockGetModelPricing.mockResolvedValue({
+      provider: "local-box",
+      model: "*",
+      inputPer1m: 3,
+      outputPer1m: 5,
+      cacheReadPer1m: 0,
+      cacheWritePer1m: 0,
+    });
+    tenant.settings = { rateLimit: { tokensPerMinute: 1000 } };
+  });
+
+  function transcribe(
+    fetcher: { fetch: unknown },
+    timing?: { graceMs: number; heartbeatMs: number },
+  ) {
+    return audioTranscriptionsV2({
+      request: formRequest("/v1/audio/transcriptions", {
+        model: "local-box/asr",
+        file: wav(),
+      }),
+      env: envWith(fetcher),
+      apiKeyAuth: auth,
+      ctx,
+      ...(timing ? { timing } : {}),
+    });
+  }
+
+  function slowFetcher() {
+    let answer: (r: Response) => void = () => {};
+    const fetcher = {
+      fetch: vi.fn(
+        () => new Promise<Response>((resolve) => (answer = resolve)),
+      ),
+    };
+    return { fetcher, answer: (r: Response) => answer(r) };
+  }
+
+  it("prices a direct reply from its usage and passes it through byte for byte", async () => {
+    const fetcher = binding(
+      new Response(reply, { headers: { "content-type": "application/json" } }),
+    );
+
+    const res = await transcribe(fetcher);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    await settled();
+
+    expect(res.status).toBe(200);
+    expect(bytes).toEqual(new TextEncoder().encode(reply));
+    expect(mockGetModelPricing).toHaveBeenCalledWith(
+      expect.anything(),
+      "local-box",
+      "asr",
+    );
+    expect(mockRecord).toHaveBeenCalledTimes(1);
+    const outcome = mockRecord.mock.calls[0][2];
+    expect(outcome.statusCode).toBe(200);
+    expect(outcome.costUsd).toBeCloseTo(expectedCost, 12);
+    expect(outcome.units).toBeNull();
+  });
+
+  it("stores no token counts on a priced transcription row", async () => {
+    await transcribe(binding(new Response(reply)));
+    await settled();
+
+    const outcome = mockRecord.mock.calls[0][2];
+    expect(outcome.usage ?? null).toBeNull();
+    expect(mockRecord.mock.calls[0][1]).toMatchObject({
+      method: "transcription",
+    });
+  });
+
+  it("settles the token bucket and re-checks spend caps after a priced reply", async () => {
+    await transcribe(binding(new Response(reply)));
+    await settled();
+
+    expect(mockSettle).toHaveBeenCalledTimes(1);
+    expect(mockSettle.mock.calls[0][1]).toMatchObject({
+      organizationId: "org_1",
+      actualTokens: 98,
+    });
+    expect(mockMaybeDisable).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-check spend caps when the price is 0", async () => {
+    mockGetModelPricing.mockResolvedValue({
+      provider: "local-box",
+      model: "*",
+      inputPer1m: 0,
+      outputPer1m: 0,
+      cacheReadPer1m: 0,
+      cacheWritePer1m: 0,
+    });
+    await transcribe(binding(new Response(reply)));
+    await settled();
+
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ costUsd: 0 });
+    expect(mockSettle).toHaveBeenCalledTimes(1);
+    expect(mockMaybeDisable).not.toHaveBeenCalled();
+  });
+
+  it("prices a heartbeat reply from its usage and passes it through after the spaces", async () => {
+    const { fetcher, answer } = slowFetcher();
+    const res = await transcribe(fetcher, { graceMs: 1, heartbeatMs: 1000 });
+    answer(
+      new Response(reply, { headers: { "content-type": "application/json" } }),
+    );
+    const body = await res.text();
+    await settled();
+
+    expect(res.status).toBe(200);
+    expect(body.startsWith(" ")).toBe(true);
+    expect(body.trimStart()).toBe(reply);
+    expect(mockRecord).toHaveBeenCalledTimes(1);
+    expect(mockRecord.mock.calls[0][2].costUsd).toBeCloseTo(expectedCost, 12);
+    expect(mockRecord.mock.calls[0][2].usage ?? null).toBeNull();
+    expect(mockSettle.mock.calls[0][1]).toMatchObject({ actualTokens: 98 });
+    expect(mockMaybeDisable).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["no usage", '{"text":"Bom dia."}'],
+    ["usage that is not an object", '{"text":"x","usage":"lots"}'],
+    [
+      "non-numeric tokens",
+      '{"text":"x","usage":{"input_tokens":"69","output_tokens":29}}',
+    ],
+    [
+      "negative tokens",
+      '{"text":"x","usage":{"input_tokens":-5,"output_tokens":29}}',
+    ],
+    ["duration usage", '{"text":"x","usage":{"type":"duration","seconds":4}}'],
+    ["a reply that is not JSON", "Bom dia."],
+  ])("records %s at cost 0", async (_label, body) => {
+    const res = await transcribe(binding(new Response(body)));
+    expect(await res.text()).toBe(body);
+    await settled();
+
+    expect(mockRecord).toHaveBeenCalledTimes(1);
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 200,
+      costUsd: 0,
+    });
+    expect(mockSettle).not.toHaveBeenCalled();
+    expect(mockMaybeDisable).not.toHaveBeenCalled();
+  });
+
+  it("records an upstream error at cost 0 without a price lookup", async () => {
+    const res = await transcribe(
+      binding(new Response('{"error":"bad format"}', { status: 400 })),
+    );
+    await settled();
+
+    expect(res.status).toBe(400);
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 400,
+      costUsd: 0,
+    });
+    expect(mockGetModelPricing).not.toHaveBeenCalled();
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it("records an upstream error after the heartbeat at cost 0", async () => {
+    const { fetcher, answer } = slowFetcher();
+    const res = await transcribe(fetcher, { graceMs: 1, heartbeatMs: 1000 });
+    answer(new Response("boom", { status: 500 }));
+    await res.text();
+    await settled();
+
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 500,
+      costUsd: 0,
+    });
+    expect(mockGetModelPricing).not.toHaveBeenCalled();
   });
 });
 

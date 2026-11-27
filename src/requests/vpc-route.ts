@@ -20,7 +20,11 @@ import {
 import { checkRateLimits, settleTokenUsage } from "../llm/rate-limit";
 import { resolveFetcher, type UpstreamFetcher } from "../llm/transport";
 import { V1OpenAICompatibleClient } from "../llm/v1-provider";
-import { computeCostUsd, getModelPricing } from "../metrics/cost-tracker";
+import {
+  computeCostUsd,
+  getModelPricing,
+  type TokenUsage,
+} from "../metrics/cost-tracker";
 import { recordChatRequest, type ChatAttempt } from "../metrics/request-logger";
 import { maybeDisableAfterSpend } from "../metrics/spend-guard";
 import { ApiKeyAuth } from "../types";
@@ -51,7 +55,7 @@ export interface RouteRequest {
   body(upstreamModel: string): BodyInit;
   /** Upstream content type; null lets fetch set it (multipart). */
   contentType: string | null;
-  /** Output tokens to rate-limit and (when `priced`) price the request at. */
+  /** Output tokens to rate-limit and (when `priced`, without `replyUsage`) price the request at. */
   tokens: number;
   /** Count of the kind's unit for a successful request (request-kinds.ts). */
   units: number | null;
@@ -78,6 +82,12 @@ export interface VpcRouteSpec {
   heartbeat: boolean;
   /** Price `tokens` as output tokens; otherwise the row costs 0. */
   priced: boolean;
+  /**
+   * [fork] W21: price a successful request from its reply instead of
+   * `tokens`. The reply is buffered on its way to the client and reaches it
+   * unchanged; null (no usable usage) costs 0. Needs `priced`.
+   */
+  replyUsage?(reply: Uint8Array): TokenUsage | null;
 }
 
 export async function serveVpcRoute(
@@ -224,25 +234,30 @@ export async function serveVpcRoute(
     model,
     method: spec.kind,
   };
+  // [fork] W21: what a successful request is charged, from its reply when
+  // the spec reads one, else `tokens` as output tokens (images).
+  const { replyUsage } = spec;
+  const { tokens } = parsed;
+  const readsReply = spec.priced && replyUsage !== undefined;
+  const chargedUsage = (reply: Uint8Array | undefined): TokenUsage | null => {
+    if (replyUsage) return reply ? replyUsage(reply) : null;
+    return { input: 0, output: tokens, cacheRead: 0, cacheWrite: 0 };
+  };
   let recorded = false;
   // One row per request, even when a failure follows a recorded outcome.
-  const record = (statusCode: number, errorMessage?: string) => {
+  const record: Recorder = (statusCode, errorMessage, reply) => {
     if (recorded) return;
     recorded = true;
     // [fork] W17: a failed request produced nothing.
     const succeeded = statusCode < 400;
-    const charged = succeeded && spec.priced;
+    const usage = !succeeded || !spec.priced ? null : chargedUsage(reply);
+    const charged = usage !== null;
     ctx.waitUntil(
       (async () => {
         // [fork] W19: priced, not stored as tokens, so these rows stay out
         // of token stats (request-kinds.ts TOKEN_ROWS_SQL).
-        const costUsd = charged
-          ? computeCostUsd(await getModelPricing(env, provider, model), {
-              input: 0,
-              output: parsed.tokens,
-              cacheRead: 0,
-              cacheWrite: 0,
-            })
+        const costUsd = usage
+          ? computeCostUsd(await getModelPricing(env, provider, model), usage)
           : 0;
         await recordChatRequest(env, attempt, {
           statusCode,
@@ -255,7 +270,7 @@ export async function serveVpcRoute(
         await settleTokenUsage(env, {
           organizationId,
           settings,
-          actualTokens: parsed.tokens,
+          actualTokens: usage.input + usage.output,
         }).catch((err) =>
           console.error(`failed to settle ${spec.kind} tokens`, err),
         );
@@ -290,7 +305,7 @@ export async function serveVpcRoute(
 
   if (!(parsed.heartbeat ?? spec.heartbeat)) {
     try {
-      return await directResponse(await upstream, record);
+      return await directResponse(await upstream, record, readsReply);
     } catch (err) {
       const message = errorText(err);
       record(502, message);
@@ -319,7 +334,7 @@ export async function serveVpcRoute(
       record(502, message);
       return errorBody(502, "upstream_error", message);
     }
-    return directResponse(first.response, record);
+    return directResponse(first.response, record, readsReply);
   }
   return heartbeatResponse(
     upstream,
@@ -328,29 +343,48 @@ export async function serveVpcRoute(
     abort,
     record,
     ctx,
+    readsReply,
   );
 }
 
-type Recorder = (statusCode: number, errorMessage?: string) => void;
+/** Record the request's one row; `reply` is the buffered body when read. */
+type Recorder = (
+  statusCode: number,
+  errorMessage?: string,
+  reply?: Uint8Array,
+) => void;
 
-/** The upstream answered within the grace period: pass its status through. */
+/**
+ * The upstream answered within the grace period: pass its status through.
+ * With `readsReply`, the body is buffered so the recorder can price it.
+ */
 async function directResponse(
   upstream: Response,
   record: Recorder,
+  readsReply: boolean,
 ): Promise<Response> {
   if (!upstream.ok) {
     const message = await upstreamErrorMessage(upstream);
     record(upstream.status, message);
     return errorBody(upstream.status, "upstream_error", message);
   }
-  record(upstream.status);
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: {
-      "Content-Type":
-        upstream.headers.get("content-type") ?? "application/json",
-    },
-  });
+  const headers = {
+    "Content-Type": upstream.headers.get("content-type") ?? "application/json",
+  };
+  if (!readsReply) {
+    record(upstream.status);
+    return new Response(upstream.body, { status: upstream.status, headers });
+  }
+  let reply: Uint8Array;
+  try {
+    reply = new Uint8Array(await upstream.arrayBuffer());
+  } catch (err) {
+    const message = errorText(err);
+    record(502, message);
+    return errorBody(502, "upstream_error", message);
+  }
+  record(upstream.status, undefined, reply);
+  return new Response(reply, { status: upstream.status, headers });
 }
 
 /**
@@ -366,6 +400,7 @@ function heartbeatResponse(
   abort: AbortController,
   record: Recorder,
   ctx: { waitUntil(promise: Promise<unknown>): void },
+  readsReply: boolean,
 ): Response {
   const encoder = new TextEncoder();
   const { readable, writable } = new TransformStream<Uint8Array>();
@@ -410,15 +445,22 @@ function heartbeatResponse(
           record(res.status, message);
           await writeError(res.status, message);
         } else {
+          // [fork] W21: keep a copy of the reply for the recorder to price.
+          const chunks: Uint8Array[] = [];
           if (res.body) {
             const reader = res.body.getReader();
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
+              if (readsReply) chunks.push(value);
               await writer.write(value);
             }
           }
-          record(res.status);
+          record(
+            res.status,
+            undefined,
+            readsReply ? concat(chunks) : undefined,
+          );
         }
       } catch (err) {
         clearTimeout(maxTimer.id);
@@ -437,6 +479,16 @@ function heartbeatResponse(
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function concat(chunks: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 function errorText(err: unknown): string {
