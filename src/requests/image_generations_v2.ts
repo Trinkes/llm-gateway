@@ -6,6 +6,7 @@ import {
   assertModelAllowed,
   assertProviderAllowed,
   assertTenantActive,
+  keyMayUseProvider,
   type PolicyError,
 } from "../llm/policy";
 import {
@@ -81,8 +82,8 @@ export async function imageGenerationsV2(
   );
   const model = slash > 0 ? rawModel.slice(slash + 1) : rawModel;
   if (!provider || !model) return invalid("model must be provider/model");
-  // A key bound to a provider only ever routes to that provider (as chat).
-  if (boundProvider && provider !== boundProvider) {
+  // A bound key reaches its provider plus any it lists (as chat, [fork] W16).
+  if (boundProvider && !keyMayUseProvider(apiKeyAuth.scopes, provider)) {
     return errorBody(
       403,
       "provider_mismatch",

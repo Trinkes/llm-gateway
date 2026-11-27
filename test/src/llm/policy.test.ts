@@ -5,6 +5,7 @@ import {
   assertProviderAllowed,
   assertTenantActive,
   isModelAllowed,
+  keyMayUseProvider,
 } from "~/src/llm/policy";
 import type { ApiKeyScopes } from "~/src/types";
 
@@ -80,5 +81,69 @@ describe("assertModelAllowed", () => {
     const scopes: ApiKeyScopes = { models: ["gpt-4o"] };
     const err = assertModelAllowed({}, scopes, "openai", "gpt-4o-mini");
     expect(err?.code).toBe("model_not_allowed");
+  });
+});
+
+// [fork] W16: a key may use its default provider or any provider it lists.
+describe("keyMayUseProvider", () => {
+  it.each([
+    ["an unscoped key, any provider", {}, "openai", true],
+    [
+      "a bound key, its provider",
+      { defaultProvider: "local-m5" },
+      "local-m5",
+      true,
+    ],
+    [
+      "a bound key, another provider",
+      { defaultProvider: "local-m5" },
+      "local-m5-image",
+      false,
+    ],
+    [
+      "a bound key, a listed provider",
+      {
+        defaultProvider: "local-m5",
+        providers: ["local-m5", "local-m5-image"],
+      },
+      "Local-M5-Image",
+      true,
+    ],
+    [
+      "a bound key, an unlisted provider",
+      {
+        defaultProvider: "local-m5",
+        providers: ["local-m5", "local-m5-image"],
+      },
+      "openai",
+      false,
+    ],
+    [
+      "a list without default, a listed provider",
+      { providers: ["openai"] },
+      "openai",
+      true,
+    ],
+    [
+      "a list without default, another provider",
+      { providers: ["openai"] },
+      "groq",
+      false,
+    ],
+    [
+      "an empty list with a default",
+      { defaultProvider: "local-m5", providers: [] },
+      "openai",
+      false,
+    ],
+  ] as [string, ApiKeyScopes, string, boolean][])(
+    "%s",
+    (_, scopes, provider, expected) => {
+      expect(keyMayUseProvider(scopes, provider)).toBe(expected);
+    },
+  );
+
+  it("allows anything without scopes", () => {
+    expect(keyMayUseProvider(undefined, "openai")).toBe(true);
   });
 });

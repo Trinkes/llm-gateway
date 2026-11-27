@@ -12,7 +12,7 @@ import {
   normalizeProviderModelId,
   synthesizedMetadata,
 } from "../llm/model-catalog";
-import { isModelAllowed } from "../llm/policy";
+import { isModelAllowed, keyMayUseProvider } from "../llm/policy";
 import {
   V1_PROVIDER_NAMES,
   canonicalProviderName,
@@ -258,21 +258,9 @@ export async function modelsV2(input: ModelsInput): Promise<Response> {
           );
         models = mergeModels(models, custom);
       }
-      // api key may pin providers already (provider scope only allows some), but
-      // the request must reflect the *effective* list for this key. A key bound
-      // to a provider (scopes.defaultProvider) only ever lists that provider.
-      if (apiKeyAuth.scopes?.defaultProvider) {
-        if (
-          canonicalProviderName(apiKeyAuth.scopes.defaultProvider) !== provider
-        ) {
-          return;
-        }
-      } else if (
-        apiKeyAuth.scopes?.providers &&
-        !apiKeyAuth.scopes.providers.includes(provider)
-      ) {
-        return;
-      }
+      // List only the providers this key may use: its provider list, else
+      // its bound provider, else all ([fork] W16).
+      if (!keyMayUseProvider(apiKeyAuth.scopes, provider)) return;
       models = models.filter((m) => {
         const bare = m.id;
         return isModelAllowed(allowlist, provider, bare);

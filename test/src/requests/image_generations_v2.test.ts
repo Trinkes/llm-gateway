@@ -273,6 +273,21 @@ describe("imageGenerationsV2", () => {
     expect(mockCheckRateLimits).not.toHaveBeenCalled();
   });
 
+  it("accepts a bound key that lists the provider", async () => {
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+    const apiKeyAuth = {
+      ...baseAuth,
+      scopes: {
+        defaultProvider: "local-chat",
+        providers: ["local-chat", "local-box"],
+      },
+    } as ApiKeyAuth;
+
+    const res = await generate(boxEnv(binding), { apiKeyAuth });
+
+    expect(res.status).toBe(200);
+  });
+
   it("accepts a bound key naming its own provider explicitly", async () => {
     const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
     const apiKeyAuth = {
