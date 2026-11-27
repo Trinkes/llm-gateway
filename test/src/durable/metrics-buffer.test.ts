@@ -230,8 +230,11 @@ describe("MetricsBuffer DO", () => {
       }),
     });
     const pending = await s.throughputRows(ORG, ["box"], now - 60, now + 10);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({
+    expect(pending.map((r) => r.status_code).sort()).toEqual([200, 500]);
+    const ok = pending.find((r) => r.status_code === 200)!;
+    expect(ok).toMatchObject({
+      provider: "box",
+      method: "chat",
       timestamp: now,
       latency_ms: 2000,
       ttft_ms: 150,
@@ -239,7 +242,7 @@ describe("MetricsBuffer DO", () => {
       prefill_tokens: 450,
       tokens_output: 100,
     });
-    expect(typeof pending[0].id).toBe("string");
+    expect(typeof ok.id).toBe("string");
 
     await s.fetch("http://internal/flush");
     expect(await s.throughputRows(ORG, ["box"], now - 60, now + 10)).toEqual(

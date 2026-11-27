@@ -1,7 +1,9 @@
 // [fork] W12: decode/prefill tok/s from the request log, not box counters
 // (Halogen's token counters only move when a request finishes).
+import type { ModelRequest } from "./model-activity";
 
-export interface ThroughputRequest {
+/** [fork] W22: also the model fields, so per-model activity reads the same rows. */
+export interface ThroughputRequest extends ModelRequest {
   /** Row id; lets rows read from D1 and from the metrics buffer be merged. */
   id?: string;
   /** Unix seconds when the request finished. */
@@ -79,6 +81,11 @@ function spread(
   }
 }
 
+/** [fork] W22: the read keeps failed rows (they used the box); token stats skip them. */
+function succeeded(rows: ThroughputRequest[]): ThroughputRequest[] {
+  return rows.filter((r) => r.status_code < 400);
+}
+
 /**
  * Tok/s per `bucketS` bucket over `[from, to)`: one point per bucket, zeros
  * where idle (so "idle" is distinguishable from a gap).
@@ -92,7 +99,7 @@ export function spreadThroughput(
   const n = Math.ceil((to - from) / bucketS);
   const decode = new Array<number>(n).fill(0);
   const prefill = new Array<number>(n).fill(0);
-  for (const row of rows) {
+  for (const row of succeeded(rows)) {
     const p = phases(row);
     spread(prefill, row.prefill_tokens, p.prefill, from, bucketS);
     spread(decode, row.tokens_output, p.decode, from, bucketS);
@@ -115,7 +122,7 @@ export function countRequests(
   bucketS: number,
 ): number[] {
   const counts = new Array<number>(Math.ceil((to - from) / bucketS)).fill(0);
-  for (const row of rows) {
+  for (const row of succeeded(rows)) {
     const start = row.timestamp - row.latency_ms / 1000;
     const first = Math.max(0, Math.floor((start - from) / bucketS));
     const last = Math.min(
@@ -153,8 +160,8 @@ function mean(values: number[]): number {
  * SQL for the rows of finished requests overlapping `[from, to)` in `table`
  * (`request_metrics` in D1, or the MetricsBuffer's `metrics_buffer`, which has
  * the same columns). Bound to `(orgId, ...providers, from, to + MAX_REQUEST_S,
- * to)`; see `throughputRowsBindings`. Errors and response-cache hits are
- * skipped. `prefill_tokens` is the prompt tokens the box actually processed:
+ * to)`; see `throughputRowsBindings`. Response-cache hits are skipped; errors
+ * are kept for per-model busy time (W22) and skipped by the token stats. `prefill_tokens` is the prompt tokens the box actually processed:
  * `tokens_input` is stored with prompt-cache reads and writes already removed
  * (see `request-logger.ts`), so only cache writes, which were computed, are
  * added back. Cache reads were reused, not prefilled.
@@ -167,11 +174,12 @@ export function throughputRowsSql(
   return `SELECT id, timestamp, latency_ms, ttft_ms, decode_ms,
             COALESCE(tokens_input, 0)
               + COALESCE(tokens_cache_write, 0) AS prefill_tokens,
-            COALESCE(tokens_output, 0) AS tokens_output
+            COALESCE(tokens_output, 0) AS tokens_output,
+            COALESCE(tokens_input, 0) AS tokens_input,
+            provider, method, status_code, units
        FROM ${table}
       WHERE organization_id = ?
         AND provider IN (${marks})
-        AND status_code < 400
         AND cache_hit = 0
         AND timestamp >= ?
         AND timestamp < ?
