@@ -256,7 +256,6 @@ export interface LiveSnapshot {
   inference: InferenceSnapshot | null;
   host: HostSnapshot | null;
   lastRequest: RequestRow | null;
-  /** [fork] W17: unit and label of the last request's kind. */
   /** Request throughput of the last 10 minutes, one point per 10 s (idle = 0). */
   throughput: ThroughputPoint[];
 }
