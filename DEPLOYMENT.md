@@ -236,6 +236,17 @@ When the upstream has not answered within 15 s, the gateway commits `200` and se
 image arrives, so idle timeouts do not cut long generations; a failure after that point (or no answer within 10 min) is
 returned as an OpenAI-style `{"error": …}` body with status 200.
 
+#### More self-hosted servers (optional: edits, speech, embeddings, decisions)
+
+`POST /v1/images/edits`, `/v1/audio/transcriptions`, `/v1/audio/speech` and `/v1/systemone` (W20), and
+`/v1/embeddings`, reach a vpc provider the same way: one VPC service, `--vpc-service-id` / `--vpc-allow` pair and
+Custom OpenAI-compatible provider (transport `vpc`) per server. A server whose `GET /health` does not answer
+`{"status":"ok"}`, or that is not the inference server, gets `--vpc-health-path NAME=/health` (any 2xx counts and
+it stays off the Live page). Image edits also need "Serve image edits" ticked on the image provider
+(`settings.imageEdits: true`). Transcription, speech and decision rows are recorded at cost 0; embeddings are
+priced per input token (add a `*` zero-price row for a self-hosted provider). Workers Builds: append each name to
+`VPC_SERVICE_IDS`, `VPC_ALLOW` and `VPC_HEALTH_PATHS`.
+
 Real ids are injected into the git-ignored generated config only; never commit them.
 
 ---

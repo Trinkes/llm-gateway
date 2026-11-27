@@ -300,6 +300,15 @@ describe("PUT /api/providers/:provider", () => {
     expect(status).toBe(400);
   });
 
+  // [fork] W20
+  it("rejects a non-boolean imageEdits setting", async () => {
+    const { status } = await putJson(
+      "/api/providers/openai",
+      JSON.stringify({ settings: { imageEdits: "yes" } }),
+    );
+    expect(status).toBe(400);
+  });
+
   it("rejects an invalid JSON body", async () => {
     const { status } = await putJson("/api/providers/openai", "not-json");
     expect(status).toBe(400);

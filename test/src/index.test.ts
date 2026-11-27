@@ -57,6 +57,24 @@ describe("worker dispatch (V2)", () => {
     },
   );
 
+  // [fork] W20
+  it.each([
+    "/v1/images/edits",
+    "/v1/audio/transcriptions",
+    "/v1/audio/speech",
+    "/v1/systemone",
+  ])("returns 401 for unauthenticated POST %s", async (path) => {
+    const res = await SELF.fetch(`http://example.com${path}`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model: "m", input: "x" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
   // [fork] W7
   it("requires a session for /api/health/upstreams", async () => {
     const res = await SELF.fetch("http://example.com/api/health/upstreams", {
@@ -193,6 +211,27 @@ describe("tenant prefix routing", () => {
     expect(res.status).toBe(400); // routed to org_b, openai not configured
     expect((await res.json()).error.message).toMatch(/openai/i);
   });
+
+  // [fork] W20
+  it.each(["/proxy_abc123/v1/audio/speech", "/proxy_abc123/v1/systemone"])(
+    "routes a prefixed passthrough path %s",
+    async (path) => {
+      await insertOrg("org_b", { systemPrefix: "proxy_abc123" });
+      await insertKey("k_b", "org_b", "sk_b");
+
+      const res = await SELF.fetch(`http://example.com${path}`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer sk_b",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ model: "openai/tts-1", input: "x" }),
+      });
+
+      expect(res.status).toBe(400); // routed to org_b, openai not configured
+      expect((await res.json()).error.message).toMatch(/openai/i);
+    },
+  );
 
   it("rejects a non-root tenant on the plain path with a hint", async () => {
     await insertOrg("org_b", { systemPrefix: "proxy_abc123" });

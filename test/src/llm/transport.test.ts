@@ -145,6 +145,10 @@ describe("resolveFetcher", () => {
     ["embeddingsPath", "/v1/embeddings?x=1"],
     ["chatCompletionPath", "/v1/chat/completions/extra"],
     ["imagesPath", "/v1/images/edits"], // [fork] W15
+    ["imageEditsPath", "/v1/images/generations"], // [fork] W20
+    ["transcriptionsPath", "/v1/audio/speech"], // [fork] W20
+    ["speechPath", "/v1/audio/transcriptions"], // [fork] W20
+    ["systemonePath", "/v1/chat/completions"], // [fork] W20
   ])("rejects %s = %s", (key, value) => {
     expectNotConfigured(
       () => resolveFetcher(env, { ...vpc, [key]: value }, ORG),
@@ -193,6 +197,10 @@ describe("assertVpcUrl", () => {
     "http://127.0.0.1:11435/v1/models",
     "http://127.0.0.1:11435/v1/embeddings",
     "http://127.0.0.1:11436/v1/images/generations", // [fork] W15
+    "http://127.0.0.1:11436/v1/images/edits", // [fork] W20
+    "http://127.0.0.1:11438/v1/audio/transcriptions", // [fork] W20
+    "http://127.0.0.1:11440/v1/audio/speech", // [fork] W20
+    "http://127.0.0.1:11437/v1/systemone", // [fork] W20
   ])("accepts %s", (url) => {
     expect(() => assertVpcUrl(url)).not.toThrow();
   });
@@ -200,7 +208,7 @@ describe("assertVpcUrl", () => {
   it.each([
     "http://127.0.0.1:11435/chat/completions",
     "http://127.0.0.1:11435/v1/admin",
-    "http://127.0.0.1:11436/v1/images/edits", // [fork] W15
+    "http://127.0.0.1:11438/v1/audio/translations", // [fork] W20
     "http://127.0.0.1:11435/v1/models?x=1",
     "http://127.0.0.1:11435/v1/models#x",
     "http://127.0.0.1:11435/v1/%2e%2e/admin",

@@ -307,3 +307,88 @@ describe("embeddingsV2 validation", () => {
     expect(await errorOf(await embed())).toEqual([400, "model_not_allowed"]);
   });
 });
+
+// [fork] W20: a vpc provider is reached through its binding, like chat.
+describe("embeddingsV2 over a vpc provider", () => {
+  const box: DecryptedProviderConfig = {
+    id: "pcfg_box",
+    provider: "local-box",
+    name: "local-box",
+    enabled: true,
+    keys: [],
+    settings: {
+      baseUrl: "http://127.0.0.1:11439",
+      transport: "vpc",
+      vpcBinding: "EMB",
+    },
+    updatedAt: 1,
+  };
+
+  function embedVia(env: object, apiKeyAuth: ApiKeyAuth = auth) {
+    return embeddingsV2({
+      request: new Request("https://gw.test/v1/embeddings", {
+        method: "POST",
+        body: JSON.stringify({ model: "local-box/bge", input: "olá" }),
+      }),
+      env: env as Env,
+      apiKeyAuth,
+      ctx: { waitUntil: (p) => void pending.push(p) },
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetProviderConfig.mockResolvedValue(box);
+    pending.length = 0;
+    tenant.settings = {};
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends the request through the binding, not global fetch", async () => {
+    const global = vi.spyOn(globalThis, "fetch");
+    const binding = {
+      fetch: vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({ data: [], usage: { prompt_tokens: 3 } }),
+          ),
+        ),
+    };
+
+    const res = await embedVia({ VPC_BINDINGS: "EMB:org_1", EMB: binding });
+    await Promise.all(pending);
+
+    expect(res.status).toBe(200);
+    expect(global).not.toHaveBeenCalled();
+    expect(binding.fetch.mock.calls[0][0]).toBe(
+      "http://127.0.0.1:11439/v1/embeddings",
+    );
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 200,
+      usage: { input: 3 },
+    });
+  });
+
+  it("refuses a binding the organization is not allowed to use", async () => {
+    const binding = { fetch: vi.fn() };
+
+    const res = await embedVia({ VPC_BINDINGS: "EMB:org_2", EMB: binding });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("not_configured");
+    expect(binding.fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a key bound to another provider", async () => {
+    const binding = { fetch: vi.fn() };
+
+    const res = await embedVia({ VPC_BINDINGS: "EMB:org_1", EMB: binding }, {
+      ...auth,
+      scopes: { defaultProvider: "other" },
+    } as unknown as ApiKeyAuth);
+
+    expect((await res.json()).error.code).toBe("provider_mismatch");
+    expect(binding.fetch).not.toHaveBeenCalled();
+  });
+});

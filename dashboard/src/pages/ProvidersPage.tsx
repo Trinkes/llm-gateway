@@ -560,6 +560,10 @@ function ProviderFormModal({
     initialSettings?.trace === true,
   );
   const [showTraceConfirm, setShowTraceConfirm] = useState(false);
+  // [fork] W20: whether /v1/images/edits may reach this vpc provider.
+  const [imageEdits, setImageEdits] = useState(
+    initialSettings?.imageEdits === true,
+  );
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
 
   const applyPreset = (preset: {
@@ -684,6 +688,8 @@ function ProviderFormModal({
             : {}),
           transport,
           ...(transport === "vpc" ? { vpcBinding: vpcBinding.trim() } : {}),
+          // [fork] W20: always sent for vpc, so unticking it persists.
+          ...(isVpc ? { imageEdits } : {}),
           // [fork] W3: a JSON parse error surfaces through the caller's catch.
           ...(injectBodyText.trim()
             ? { injectBody: JSON.parse(injectBodyText) }
@@ -1133,6 +1139,24 @@ function ProviderFormModal({
                     id, and requests using it reach the upstream id.
                   </p>
                 </div>
+                {/* [fork] W20 */}
+                {isVpc && (
+                  <div>
+                    <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-gray-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={imageEdits}
+                        onChange={(e) => setImageEdits(e.target.checked)}
+                        className="h-3.5 w-3.5"
+                      />
+                      Serve image edits (/v1/images/edits)
+                    </label>
+                    <p className="mt-1 text-[11px] text-gray-400">
+                      Only for an image server that supports edits; requests to
+                      a provider without it are refused.
+                    </p>
+                  </div>
+                )}
               </div>
             </details>
           </>

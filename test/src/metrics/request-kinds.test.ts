@@ -29,6 +29,15 @@ describe("kindInfo", () => {
     });
   });
 
+  // [fork] W20
+  it.each([
+    ["transcription", "Transcription"],
+    ["speech", "Speech"],
+    ["decision", "Decision"],
+  ])("labels %s with no unit (shown as duration)", (kind, label) => {
+    expect(kindInfo(kind)).toEqual({ kind, unit: null, label });
+  });
+
   it("gives an unknown kind no unit and its own name as label", () => {
     expect(kindInfo("audio")).toEqual({
       kind: "audio",

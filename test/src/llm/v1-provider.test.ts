@@ -242,3 +242,59 @@ describe("V1OpenAICompatibleClient.imageGenerations", () => {
     expect(fetchMock.mock.calls[0][0]).not.toMatch(/\/v1\/v1\//);
   });
 });
+
+// [fork] W20: any request body (multipart, JSON) to a fixed upstream path.
+describe("V1OpenAICompatibleClient.post", () => {
+  function box() {
+    const binding = {
+      fetch: vi.fn().mockResolvedValue(new Response("{}", { status: 200 })),
+    };
+    const client = new V1OpenAICompatibleClient({
+      provider: "local-box",
+      keys: [],
+      custom: { baseUrl: "http://127.0.0.1:11438" },
+      fetcher: binding,
+    });
+    return { binding, client };
+  }
+
+  it("sends a form without its own content type so fetch adds the boundary", async () => {
+    const { binding, client } = box();
+    const form = new FormData();
+    form.set("model", "m");
+
+    await client.post("/v1/audio/transcriptions", form, { contentType: null });
+
+    const [url, init] = binding.fetch.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:11438/v1/audio/transcriptions");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(form);
+    expect(init.headers["content-type"]).toBeUndefined();
+  });
+
+  it("sends a JSON body as application/json by default", async () => {
+    const { binding, client } = box();
+
+    await client.post("/v1/audio/speech", '{"input":"x"}');
+
+    const init = binding.fetch.mock.calls[0][1];
+    expect(init.body).toBe('{"input":"x"}');
+    expect(init.headers["content-type"]).toBe("application/json");
+  });
+
+  it("passes the abort signal to the upstream fetch", async () => {
+    const { binding, client } = box();
+    const controller = new AbortController();
+
+    await client.post("/v1/systemone", "{}", { signal: controller.signal });
+
+    expect(binding.fetch.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+
+  it("refuses a path outside the allowed vpc endpoints", async () => {
+    const { binding, client } = box();
+
+    await expect(client.post("/v1/other", "{}")).rejects.toThrow(/not allowed/);
+    expect(binding.fetch).not.toHaveBeenCalled();
+  });
+});

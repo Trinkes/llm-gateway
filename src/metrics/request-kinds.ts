@@ -13,6 +13,10 @@ const KINDS = new Map<string, { unit: KindUnit; label: string }>([
   ["chat", { unit: "tokens", label: "Chat" }],
   ["embedding", { unit: "tokens", label: "Embedding" }],
   ["image", { unit: "images", label: "Image" }],
+  // [fork] W20: passthrough routes (vpc_passthrough_v2.ts), measured in time.
+  ["transcription", { unit: null, label: "Transcription" }],
+  ["speech", { unit: null, label: "Speech" }],
+  ["decision", { unit: null, label: "Decision" }],
 ]);
 
 /** Unit and label of a kind; an unknown kind has no unit and labels itself. */
