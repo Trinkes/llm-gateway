@@ -32,7 +32,11 @@ usageRouter.get("/costs", async (c) => {
   if (start >= end) return c.json({ error: "start must be before end" }, 400);
 
   const days = await dailyCosts(c.env, orgId, start, end);
-  const summary = await spendForRange(c.env, orgId, { start, end });
+  const summary = await spendForRange(c.env, orgId, {
+    start,
+    end,
+    withKinds: true,
+  });
   return c.json({ days, summary });
 });
 

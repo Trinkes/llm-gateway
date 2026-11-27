@@ -86,6 +86,8 @@ export interface SpendRangeOptions {
   apiKeyId?: string;
   /** [fork] W17: only this request kind (`request_metrics.method`). */
   kind?: string;
+  /** [fork] W17: also compute `byKind` (one more statement, same round trip). */
+  withKinds?: boolean;
 }
 
 export interface SpendSummary {
@@ -154,11 +156,10 @@ export async function spendForRange(
     params.push(options.kind);
   }
 
-  // [fork] W17: totals and the per-kind split share one round trip.
+  // [fork] W17: the per-kind split is opt-in and shares the round trip.
   const whereSql = where.join(" AND ");
-  const [summary, kinds] = await env.DB.batch([
-    env.DB.prepare(
-      `SELECT
+  const totals = env.DB.prepare(
+    `SELECT
        COUNT(*) AS requests,
        SUM(cost_usd) AS cost_usd,
        SUM(tokens_input) AS tokens_input,
@@ -170,10 +171,19 @@ export async function spendForRange(
        SUM(cache_hit) AS response_cache_hits,
        COUNT(CASE WHEN tokens_cache_read > 0 THEN 1 END) AS prompt_cache_hits
      FROM request_metrics WHERE ${whereSql}`,
-    ).bind(...params),
-    kindUsageStatement(env, whereSql, params),
-  ]);
-  const row = summary.results[0] as SpendRow | undefined;
+  ).bind(...params);
+  let row: SpendRow | null;
+  let byKind: KindUsage[] = [];
+  if (options.withKinds) {
+    const [summary, kinds] = await env.DB.batch([
+      totals,
+      kindUsageStatement(env, whereSql, params),
+    ]);
+    row = (summary.results[0] as SpendRow | undefined) ?? null;
+    byKind = toKindUsage(kinds.results);
+  } else {
+    row = await totals.first<SpendRow>();
+  }
 
   const requests = row?.requests ?? 0;
   const errors = row?.errors ?? 0;
@@ -193,7 +203,7 @@ export async function spendForRange(
     responseCacheHits: row?.response_cache_hits ?? 0,
     promptCacheHits,
     promptCacheHitRate: requests > 0 ? promptCacheHits / requests : 0,
-    byKind: toKindUsage(kinds.results),
+    byKind,
   };
 }
 

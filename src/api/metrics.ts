@@ -49,6 +49,7 @@ metricsRouter.get("/summary", async (c) => {
     provider,
     model,
     kind,
+    withKinds: true,
   });
   return c.json({ summary });
 });

@@ -120,7 +120,11 @@ beforeEach(async () => {
 describe("spendForRange per kind", () => {
   it("splits totals per kind and keeps the all-rows totals", async () => {
     await seedKinds();
-    const s = await spendForRange(env, ORG, { start: START, end: END });
+    const s = await spendForRange(env, ORG, {
+      start: START,
+      end: END,
+      withKinds: true,
+    });
 
     expect(s.requests).toBe(4);
     expect(s.avgLatencyMs).toBe(1400);
@@ -176,13 +180,25 @@ describe("spendForRange per kind", () => {
       start: START,
       end: END,
       kind: "image",
+      withKinds: true,
     });
     expect(s.requests).toBe(1);
     expect(s.byKind.map((k) => k.kind)).toEqual(["image"]);
   });
 
-  it("has no kinds without traffic", async () => {
+  it("skips the per-kind split unless asked", async () => {
+    await seedKinds();
     const s = await spendForRange(env, ORG, { start: START, end: END });
+    expect(s.requests).toBe(4);
+    expect(s.byKind).toEqual([]);
+  });
+
+  it("has no kinds without traffic", async () => {
+    const s = await spendForRange(env, ORG, {
+      start: START,
+      end: END,
+      withKinds: true,
+    });
     expect(s.byKind).toEqual([]);
   });
 });

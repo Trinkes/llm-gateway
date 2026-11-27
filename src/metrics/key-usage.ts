@@ -117,6 +117,6 @@ export async function usageByKey(
     costUsd: row.cost_usd,
     latencyAvgMs: row.latency_avg_ms,
     lastRequestAt: row.last_request_at,
-    kinds: byKey.get(row.api_key_id)!,
+    kinds: byKey.get(row.api_key_id) ?? [],
   }));
 }
