@@ -189,8 +189,6 @@ export function LivePage() {
     ? ratio(inf.draftAcceptedTotal, inf.draftTokensTotal)
     : null;
   const last = snapshot.lastRequest;
-  // [fork] W17: the unit comes from the response, never from the kind name.
-  const lastKind = snapshot.lastRequestKind;
 
   return (
     <div className="space-y-6">
@@ -343,12 +341,12 @@ export function LivePage() {
         title="Last request"
         subtitle={
           last
-            ? `${lastKind?.label ?? last.method} · ${last.model} · ${fmtDateTime(last.timestamp).full}`
+            ? `${last.kind_label} · ${last.model} · ${fmtDateTime(last.timestamp).full}`
             : undefined
         }
       >
         {last ? (
-          lastKind?.unit === "tokens" ? (
+          last.kind_unit === "tokens" ? (
             <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
               <StatCard
                 label="Decode"
@@ -366,9 +364,9 @@ export function LivePage() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
-              <StatCard label="Kind" value={lastKind?.label ?? last.method} />
+              <StatCard label="Kind" value={last.kind_label} />
               <StatCard label="Duration" value={fmtMs(last.latency_ms)} />
-              {lastKind?.unit === "images" && (
+              {last.kind_unit === "images" && (
                 <StatCard
                   label="Images"
                   value={formatUsage("images", { units: last.units })}

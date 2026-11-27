@@ -360,6 +360,11 @@ describe("summarize kinds", () => {
     expect(k[1].perUnitUsd).toBeCloseTo(0.0018 / 6); // per image
     expect(k[2].perUnitUsd).toBeCloseTo(0.0012 / 2); // per request
     expect(k[1]).toMatchObject({ requests: 3, units: 6, busySeconds: 30 });
+    expect(k.map((x) => [x.tokensInput, x.tokensOutput])).toEqual([
+      [3_000_000, 1_000_000],
+      [0, 0],
+      [0, 0],
+    ]);
     // chat's per-1M uses only chat's share
     expect(periods[0].electricityPer1mOutputUsd).toBeCloseTo(0.003);
     expect(totals.electricityPer1mOutputUsd).toBeCloseTo(0.003);
@@ -420,6 +425,10 @@ describe("summarize kinds", () => {
     expect(chat.kind).toBe("chat");
     expect(chat.busySeconds).toBe(40);
     expect(chat.requests).toBe(10);
+    // token counts add up across the range
+    expect([chat.tokensInput, chat.tokensOutput]).toEqual([
+      3_000_000, 1_000_000,
+    ]);
     expect(chat.share).toBeCloseTo(40 / 70);
     expect(image.share).toBeCloseTo(30 / 70);
     // shares and kWh agree, and the kinds carry all of the range's energy

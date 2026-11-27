@@ -4,7 +4,6 @@ import {
   formatUsage,
   kindOptions,
   KindUsage,
-  rowUnit,
 } from "../../../dashboard/src/lib/requestKinds";
 import { describe, expect, it } from "vitest";
 
@@ -29,28 +28,18 @@ describe("formatUsage", () => {
   });
 });
 
-describe("rowUnit and formatRowUsage", () => {
-  const chat = { tokens_input: 10, tokens_output: 5, latency_ms: 900 };
-  const image = {
-    tokens_input: 0,
-    tokens_output: 0,
-    units: 2,
-    latency_ms: 30000,
-  };
-  const audio = { tokens_input: null, tokens_output: null, latency_ms: 4200 };
-
-  it("infers the unit from the row's counts", () => {
-    expect(rowUnit(chat)).toBe("tokens");
-    expect(rowUnit({ tokens_cache_write: 3 })).toBe("tokens");
-    expect(rowUnit(image)).toBe("images");
-    expect(rowUnit(audio)).toBeNull();
-    expect(rowUnit({})).toBeNull();
-  });
-
-  it("formats each kind of row", () => {
-    expect(formatRowUsage(chat)).toBe("10 / 5");
-    expect(formatRowUsage(image)).toBe("2 images");
-    expect(formatRowUsage(audio)).toBe("4.2 s");
+describe("formatRowUsage", () => {
+  it("formats each row by its kind's unit, even when it failed", () => {
+    expect(
+      formatRowUsage({
+        kind_unit: "tokens",
+        tokens_input: 10,
+        tokens_output: 5,
+      }),
+    ).toBe("10 / 5");
+    expect(formatRowUsage({ kind_unit: "tokens" })).toBe("0 / 0");
+    expect(formatRowUsage({ kind_unit: "images", units: 2 })).toBe("2 images");
+    expect(formatRowUsage({ kind_unit: null, latency_ms: 4200 })).toBe("4.2 s");
   });
 });
 
@@ -89,16 +78,16 @@ describe("formatKindUsage", () => {
 });
 
 describe("kindOptions", () => {
-  it("lists each kind once, labelled when a label is known", () => {
+  it("lists each kind once by its label", () => {
     const facets = [
-      { kind: "chat" },
-      { kind: "image" },
-      { kind: "chat" },
-      { kind: "audio" },
+      { kind: "chat", label: "Chat" },
+      { kind: "image", label: "Image" },
+      { kind: "chat", label: "Chat" },
+      { kind: "audio", label: "audio" },
     ];
-    expect(kindOptions(facets, { image: "Images" })).toEqual([
-      { value: "chat", label: "chat" },
-      { value: "image", label: "Images" },
+    expect(kindOptions(facets)).toEqual([
+      { value: "chat", label: "Chat" },
+      { value: "image", label: "Image" },
       { value: "audio", label: "audio" },
     ]);
     expect(kindOptions([])).toEqual([]);

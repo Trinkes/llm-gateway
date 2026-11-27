@@ -303,7 +303,9 @@ export function RequestsPage() {
                       <td className="px-5 py-3 text-gray-600">
                         {r.model || "—"}
                       </td>
-                      <td className="px-5 py-3 text-gray-600">{r.method}</td>
+                      <td className="px-5 py-3 text-gray-600">
+                        {r.kind_label}
+                      </td>
                       <td className="px-5 py-3">
                         <div className="flex flex-col items-start gap-1">
                           <RequestStatusBadge

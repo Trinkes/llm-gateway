@@ -23,6 +23,9 @@ export interface KindEnergy {
   label: string;
   requests: number;
   units: number;
+  /** Token kinds' own token counts (0 for other kinds). */
+  tokensInput: number;
+  tokensOutput: number;
   busySeconds: number;
   /** busySeconds over every kind's busy seconds. */
   share: number;
@@ -127,6 +130,8 @@ export function kindEnergy(shares: KindShare[]): KindEnergy[] {
         label,
         requests: k.requests,
         units: k.units,
+        tokensInput: k.input,
+        tokensOutput: k.output,
         busySeconds: k.busySeconds,
         share: k.busySeconds / busy,
         kwh: k.kwh,

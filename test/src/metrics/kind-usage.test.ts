@@ -275,6 +275,8 @@ describe("GET /api/metrics/latency", () => {
       latency: Array<{
         provider: string;
         kind: string;
+        unit: string | null;
+        label: string;
         requests: number;
         avg: number;
       }>;
@@ -286,6 +288,11 @@ describe("GET /api/metrics/latency", () => {
         ["p1", "image", 1, 5000],
       ],
     );
+    expect(latency.map((l) => [l.unit, l.label])).toEqual([
+      [null, "audio"],
+      ["tokens", "Chat"],
+      ["images", "Image"],
+    ]);
   });
 });
 

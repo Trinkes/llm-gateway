@@ -36,6 +36,9 @@ export interface KindEnergy {
   label: string;
   requests: number;
   units: number;
+  /** [fork] W17: token counts of token kinds (0 for other kinds). */
+  tokensInput: number;
+  tokensOutput: number;
   busySeconds: number;
   /** Share of all kinds' busy seconds, 0..1. */
   share: number;

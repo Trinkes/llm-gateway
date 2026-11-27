@@ -415,7 +415,7 @@ export function ApiKeyDetailPage() {
                     <td className="px-5 py-3 text-gray-600">
                       {r.model || "—"}
                     </td>
-                    <td className="px-5 py-3 text-gray-600">{r.method}</td>
+                    <td className="px-5 py-3 text-gray-600">{r.kind_label}</td>
                     <td className="px-5 py-3">
                       <RequestStatusBadge
                         status={r.status_code}

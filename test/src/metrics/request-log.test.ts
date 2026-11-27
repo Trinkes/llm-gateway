@@ -209,8 +209,20 @@ describe("GET /api/metrics/requests", () => {
     ]);
     const { requests, total } = await list({ kind: "image" });
     expect(total).toBe(1);
-    expect(requests[0]).toMatchObject({ id: "b", method: "image", units: 4 });
-    expect(ids((await list({ kind: "audio" })).requests)).toEqual(["c"]);
+    expect(requests[0]).toMatchObject({
+      id: "b",
+      method: "image",
+      units: 4,
+      kind_unit: "images",
+      kind_label: "Image",
+    });
+    const audio = (await list({ kind: "audio" })).requests;
+    expect(ids(audio)).toEqual(["c"]);
+    expect(audio[0]).toMatchObject({ kind_unit: null, kind_label: "audio" });
+    expect((await list({ kind: "chat" })).requests[0]).toMatchObject({
+      kind_unit: "tokens",
+      kind_label: "Chat",
+    });
     expect(ids((await list()).requests).sort()).toEqual(["a", "b", "c"]);
   });
 
@@ -288,8 +300,22 @@ describe("GET /api/metrics/requests/facets", () => {
     expect(res.status).toBe(200);
     const { facets } = (await res.json()) as { facets: RequestFacet[] };
     expect(facets).toEqual([
-      { provider: "openai", model: "gpt", kind: "chat", requests: 2 },
-      { provider: "local-m5", model: "qwen", kind: "chat", requests: 1 },
+      {
+        provider: "openai",
+        model: "gpt",
+        kind: "chat",
+        unit: "tokens",
+        label: "Chat",
+        requests: 2,
+      },
+      {
+        provider: "local-m5",
+        model: "qwen",
+        kind: "chat",
+        unit: "tokens",
+        label: "Chat",
+        requests: 1,
+      },
     ]);
     expect(await requestFacets(env, ORG, START - 7200, START - 3600)).toEqual(
       [],
@@ -301,10 +327,33 @@ describe("GET /api/metrics/requests/facets", () => {
       { id: "a", provider: "openai", model: "m" },
       { id: "b", provider: "openai", model: "m", kind: "image" },
       { id: "c", provider: "openai", model: "m", kind: "image" },
+      { id: "d", provider: "openai", model: "m", kind: "audio" },
     ]);
     expect(await requestFacets(env, ORG, START, END)).toEqual([
-      { provider: "openai", model: "m", kind: "image", requests: 2 },
-      { provider: "openai", model: "m", kind: "chat", requests: 1 },
+      {
+        provider: "openai",
+        model: "m",
+        kind: "image",
+        unit: "images",
+        label: "Image",
+        requests: 2,
+      },
+      {
+        provider: "openai",
+        model: "m",
+        kind: "audio",
+        unit: null,
+        label: "audio",
+        requests: 1,
+      },
+      {
+        provider: "openai",
+        model: "m",
+        kind: "chat",
+        unit: "tokens",
+        label: "Chat",
+        requests: 1,
+      },
     ]);
   });
 
@@ -329,6 +378,8 @@ describe("GET /api/metrics/requests/:id", () => {
       key_prefix: "olp_aaaa",
       key_status: "active",
       user_name: null,
+      kind_unit: "tokens",
+      kind_label: "Chat",
     });
   });
 

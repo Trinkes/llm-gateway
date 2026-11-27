@@ -7,6 +7,7 @@ import {
 import { kindInfo, type KindInfo } from "../metrics/request-kinds";
 import {
   latestRequestStatement,
+  withKindInfo,
   type RequestLogRow,
 } from "../metrics/request-log";
 import {
@@ -272,7 +273,9 @@ async function readRequestLog(
     ]),
     bufferedThroughputRows(env, organizationId, providers, from, to),
   ]);
-  const lastRequest = (last.results[0] as unknown as RequestLogRow) ?? null;
+  const raw = last.results[0] as unknown as
+    Omit<RequestLogRow, "kind_unit" | "kind_label"> | undefined;
+  const lastRequest = raw ? withKindInfo(raw) : null;
   return {
     lastRequest,
     lastRequestKind: lastRequest ? kindInfo(lastRequest.method) : null,

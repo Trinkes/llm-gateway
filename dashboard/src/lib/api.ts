@@ -1,4 +1,4 @@
-import type { KindInfo, KindUsage } from "./requestKinds";
+import type { KindInfo, KindUnit, KindUsage } from "./requestKinds";
 
 export interface ApiKeyView {
   id: string;
@@ -112,8 +112,10 @@ export interface AlertsView {
 
 export interface LatencyStat {
   provider: string;
-  /** [fork] W17 */
+  /** [fork] W17: kind with its unit and label. */
   kind: string;
+  unit: KindUnit;
+  label: string;
   requests: number;
   p50: number;
   p95: number;
@@ -204,6 +206,9 @@ export interface RequestRow {
   decode_ms?: number | null;
   /** [fork] W17: count of the kind's own unit (images); null for token kinds. */
   units?: number | null;
+  /** [fork] W17: unit and label of `method`, attached by the API. */
+  kind_unit: KindUnit;
+  kind_label: string;
 }
 
 // [fork] W11: GET /api/live snapshot (mirrors src/live/snapshot.ts).
@@ -354,6 +359,8 @@ export interface RequestFacet {
   model: string;
   /** [fork] W17 */
   kind: string;
+  unit: KindUnit;
+  label: string;
   requests: number;
 }
 

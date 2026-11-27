@@ -7,10 +7,10 @@ import { Card } from "./ui";
 const fmtKwh = (v: number) =>
   `${v.toLocaleString("en-US", { maximumFractionDigits: v < 10 ? 2 : 1 })} kWh`;
 
-/** Token kinds carry no count here, so only other units show a usage figure. */
 function usageOf(k: KindEnergy): string {
-  if (k.unit === "tokens") return "—";
   return formatUsage(k.unit, {
+    tokensInput: k.tokensInput,
+    tokensOutput: k.tokensOutput,
     units: k.units,
     latencyMs: k.busySeconds * 1000,
   });

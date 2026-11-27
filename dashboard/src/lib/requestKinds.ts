@@ -47,34 +47,19 @@ export function formatUsage(unit: KindUnit, parts: UsageParts): string {
   return `${(parts.latencyMs / 1000).toFixed(1)} s`;
 }
 
-/** A request row's unit from its own counts (rows carry the kind, not the unit). */
-export function rowUnit(row: {
+/** The fields of a request row that say how its kind is measured. */
+export interface RowUsageFields {
   tokens_input?: number | null;
   tokens_output?: number | null;
-  tokens_cache_read?: number | null;
-  tokens_cache_write?: number | null;
-  units?: number | null;
-}): KindUnit {
-  const tokens =
-    (row.tokens_input ?? 0) +
-    (row.tokens_output ?? 0) +
-    (row.tokens_cache_read ?? 0) +
-    (row.tokens_cache_write ?? 0);
-  if (tokens > 0) return "tokens";
-  if ((row.units ?? 0) > 0) return "images";
-  return null;
-}
-
-/** Usage text of one request-log row. */
-export function formatRowUsage(row: {
-  tokens_input?: number | null;
-  tokens_output?: number | null;
-  tokens_cache_read?: number | null;
-  tokens_cache_write?: number | null;
   units?: number | null;
   latency_ms?: number | null;
-}): string {
-  return formatUsage(rowUnit(row), {
+  /** The kind's unit, attached by the API. */
+  kind_unit: KindUnit;
+}
+
+/** Usage text of one request-log row, by its kind's unit. */
+export function formatRowUsage(row: RowUsageFields): string {
+  return formatUsage(row.kind_unit, {
     tokensInput: row.tokens_input,
     tokensOutput: row.tokens_output,
     units: row.units,
@@ -92,13 +77,10 @@ export function formatKindUsage(k: KindUsage): string {
   });
 }
 
-/** Dropdown options for the kinds present in facet rows. */
+/** Dropdown options for the kinds present in facet rows, by their label. */
 export function kindOptions(
-  facets: { kind: string }[],
-  labels: Record<string, string> = {},
+  facets: { kind: string; label: string }[],
 ): SelectOption[] {
-  return [...new Set(facets.map((f) => f.kind))].map((kind) => ({
-    value: kind,
-    label: labels[kind] ?? kind,
-  }));
+  const labels = new Map(facets.map((f) => [f.kind, f.label] as const));
+  return [...labels].map(([value, label]) => ({ value, label }));
 }

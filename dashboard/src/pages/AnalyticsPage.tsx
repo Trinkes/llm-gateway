@@ -38,15 +38,22 @@ import { formatRowUsage, KindUsage, kindOptions } from "../lib/requestKinds";
 import { ALL_RANGES } from "../lib/timeRange";
 import { useTimeRange } from "../lib/useTimeRange";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 export function AnalyticsPage() {
   const navigate = useNavigate();
   const time = useTimeRange(ALL_RANGES, "24h");
   const windowQuery = `start=${time.start}&end=${time.end}`;
-  // [fork] W17: optional kind filter for the summary and recent requests.
-  const [kind, setKind] = useState("");
+  // [fork] W17: optional kind filter for the summary, by-kind card and recent
+  // requests, kept in the `kind` URL param like the time range.
+  const [params, setParams] = useSearchParams();
+  const kind = params.get("kind") ?? "";
+  const setKind = (next: string) => {
+    const updated = new URLSearchParams(params);
+    if (next) updated.set("kind", next);
+    else updated.delete("kind");
+    setParams(updated, { replace: true });
+  };
   const kindQuery = kind ? `&kind=${encodeURIComponent(kind)}` : "";
   const facets = useQuery({
     queryKey: ["analytics-facets", windowQuery],
@@ -169,6 +176,9 @@ export function AnalyticsPage() {
                 ...kindOptions(facets.data?.facets ?? []),
               ]}
             />
+            <p className="mt-1 text-[11px] text-gray-400">
+              Filters the summary, by-kind and recent requests only.
+            </p>
           </div>
           <TimeRangeControl
             time={time}
@@ -342,7 +352,7 @@ export function AnalyticsPage() {
                     className="border-b border-gray-50 last:border-0"
                   >
                     <td className="px-5 py-3 font-medium">{l.provider}</td>
-                    <td className="px-5 py-3 text-gray-600">{l.kind}</td>
+                    <td className="px-5 py-3 text-gray-600">{l.label}</td>
                     <td className="px-5 py-3">{fmtCount(l.requests)}</td>
                     <td className="px-5 py-3">{fmtMs(l.p50)}</td>
                     <td className="px-5 py-3">{fmtMs(l.p95)}</td>
@@ -556,7 +566,9 @@ export function AnalyticsPage() {
                       <td className="px-5 py-3 text-gray-600">
                         {r.model || "—"}
                       </td>
-                      <td className="px-5 py-3 text-gray-600">{r.method}</td>
+                      <td className="px-5 py-3 text-gray-600">
+                        {r.kind_label}
+                      </td>
                       <td className="px-5 py-3">
                         <RequestStatusBadge
                           status={r.status_code}

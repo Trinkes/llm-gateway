@@ -3,6 +3,7 @@ import { cacheUsageByModel, spendForRange } from "../metrics/cost-tracker";
 import { keyDetailUsage } from "../metrics/key-detail";
 import { usageByKey } from "../metrics/key-usage";
 import { percentile } from "../metrics/percentile";
+import { kindInfo } from "../metrics/request-kinds";
 import {
   getRequest,
   listRequests,
@@ -98,9 +99,12 @@ metricsRouter.get("/latency", async (c) => {
       const sorted = vals.sort((a, b) => a - b);
       const n = sorted.length;
       const avg = sorted.reduce((a, b) => a + b, 0) / n;
+      const info = kindInfo(kind);
       return {
         provider: pv,
         kind,
+        unit: info.unit,
+        label: info.label,
         requests: n,
         p50: percentile(sorted, 0.5),
         p95: percentile(sorted, 0.95),

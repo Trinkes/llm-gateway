@@ -9,7 +9,7 @@ import {
 } from "../lib/format";
 import { smallestLivePreset } from "../lib/liveRangeFor";
 import { NO_API_KEY } from "../lib/requestExplorer";
-import { formatUsage, rowUnit } from "../lib/requestKinds";
+import { formatUsage } from "../lib/requestKinds";
 import { RequestCacheBadge } from "./RequestCacheBadge";
 import { RequestStatusBadge } from "./RequestStatusBadge";
 import { Badge, EmptyState, Spinner } from "./ui";
@@ -115,7 +115,7 @@ function DetailBody({
   const cacheWrite = r.tokens_cache_write ?? 0;
   const output = r.tokens_output ?? 0;
   // [fork] W17: token breakdown only for rows that carry tokens.
-  const unit = rowUnit(r);
+  const unit = r.kind_unit;
   const box = useQuery({
     queryKey: ["live-at", r.id],
     queryFn: () => liveAt(r.id),
@@ -128,7 +128,7 @@ function DetailBody({
         <div className="flex flex-wrap items-center gap-2">
           <RequestStatusBadge status={r.status_code} />
           <RequestCacheBadge row={r} />
-          <Badge>{r.method}</Badge>
+          <Badge>{r.kind_label}</Badge>
         </div>
         <p className="text-sm text-gray-500">{when.full}</p>
         <p className="break-all font-mono text-[11px] text-gray-400">{r.id}</p>
