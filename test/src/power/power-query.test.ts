@@ -2,6 +2,7 @@
 import { createBoxTables } from "../live/box-schema";
 import { env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { KindBusy } from "~/src/power/kind-energy";
 import { loadPowerData } from "~/src/power/power-query";
 
 const ORG = "org_power";
@@ -381,13 +382,43 @@ describe("loadPowerData kinds", () => {
       ],
       NOW,
     );
-    expect(periods[0].kinds).toEqual([
-      { kind: "image", requests: 2, units: 3, output: 0, busySeconds: 40 },
-      { kind: "audio", requests: 1, units: 0, output: 0, busySeconds: 4 },
-      { kind: "chat", requests: 2, units: 0, output: 400, busySeconds: 2 },
+    const byKind = (k: KindBusy[]) =>
+      [...k].sort((a, b) => a.kind.localeCompare(b.kind));
+    expect(byKind(periods[0].kinds)).toEqual([
+      {
+        kind: "audio",
+        requests: 1,
+        units: 0,
+        output: 0,
+        input: 0,
+        busySeconds: 4,
+      },
+      {
+        kind: "chat",
+        requests: 2,
+        units: 0,
+        output: 400,
+        input: 2000,
+        busySeconds: 2,
+      },
+      {
+        kind: "image",
+        requests: 2,
+        units: 3,
+        output: 0,
+        input: 0,
+        busySeconds: 40,
+      },
     ]);
     expect(periods[1].kinds).toEqual([
-      { kind: "image", requests: 1, units: 4, output: 0, busySeconds: 8 },
+      {
+        kind: "image",
+        requests: 1,
+        units: 4,
+        output: 0,
+        input: 0,
+        busySeconds: 8,
+      },
     ]);
   });
 

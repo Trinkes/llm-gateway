@@ -9,8 +9,10 @@ export interface KindBusy {
   requests: number;
   /** Sum of the kind's own unit count (images); 0 for token kinds. */
   units: number;
-  /** Output tokens: the per-1M base of token kinds. */
+  /** Output tokens: the per-1M base of token kinds that generate. */
   output: number;
+  /** Input tokens: the per-1M base of token kinds without output (embeddings). */
+  input: number;
   busySeconds: number;
 }
 
@@ -27,11 +29,14 @@ export interface KindEnergy {
   kwh: number;
   /** Null without a kWh price. */
   electricityUsd: number | null;
-  /** Per 1M output tokens, per image, or per request (null unit). */
+  /**
+   * Per 1M output tokens (per 1M input tokens for a token kind without
+   * output), per image, or per request (null unit).
+   */
   perUnitUsd: number | null;
 }
 
-/** A kind's busy sums with its attributed energy; adds up across periods. */
+/** A kind's busy sums with its attributed energy. */
 export interface KindShare extends KindBusy {
   kwh: number;
   electricityUsd: number | null;
@@ -58,13 +63,13 @@ export function attributeEnergy(
   });
 }
 
-const addUsd = (a: number | null, b: number | null) =>
-  a === null || b === null ? null : a + b;
-
-/** Per-kind sums over several periods' shares. */
-export function addKindShares(lists: KindShare[][]): KindShare[] {
-  const byKind = new Map<string, KindShare>();
-  for (const k of lists.flat()) {
+/**
+ * Per-kind busy sums of two sets, so a range's energy is split by the
+ * range's own busy time (its kWh then add up to the range's total).
+ */
+export function addKindBusy(a: KindBusy[], b: KindBusy[]): KindBusy[] {
+  const byKind = new Map<string, KindBusy>();
+  for (const k of [...a, ...b]) {
     const seen = byKind.get(k.kind);
     byKind.set(
       k.kind,
@@ -74,9 +79,8 @@ export function addKindShares(lists: KindShare[][]): KindShare[] {
             requests: seen.requests + k.requests,
             units: seen.units + k.units,
             output: seen.output + k.output,
+            input: seen.input + k.input,
             busySeconds: seen.busySeconds + k.busySeconds,
-            kwh: seen.kwh + k.kwh,
-            electricityUsd: addUsd(seen.electricityUsd, k.electricityUsd),
           }
         : { ...k },
     );
@@ -84,12 +88,18 @@ export function addKindShares(lists: KindShare[][]): KindShare[] {
   return [...byKind.values()];
 }
 
+/** The count a kind's electricity is divided by, and the scale of the result. */
+function unitBase(k: KindShare, unit: KindUnit): [number, number] {
+  if (unit === "tokens") {
+    return k.output > 0 ? [k.output, 1e6] : [k.input, 1e6];
+  }
+  return [unit === "images" ? k.units : k.requests, 1];
+}
+
 function perUnitUsd(k: KindShare, unit: KindUnit): number | null {
   if (k.electricityUsd === null) return null;
-  const base =
-    unit === "tokens" ? k.output : unit === "images" ? k.units : k.requests;
-  if (base === 0) return null;
-  return (k.electricityUsd / base) * (unit === "tokens" ? 1e6 : 1);
+  const [base, scale] = unitBase(k, unit);
+  return base === 0 ? null : (k.electricityUsd / base) * scale;
 }
 
 /** The API rows: unit and label attached, busiest kind first. */
@@ -116,12 +126,19 @@ export function kindEnergy(shares: KindShare[]): KindEnergy[] {
     );
 }
 
-/** Electricity of the token kinds; null without a price or token kinds. */
-export function tokenKindsUsd(shares: KindShare[]): number | null {
-  const tokens = shares.filter((k) => kindInfo(k.kind).unit === "tokens");
-  if (tokens.length === 0) return null;
-  return tokens.reduce<number | null>(
-    (sum, k) => addUsd(sum, k.electricityUsd),
-    0,
+/**
+ * Electricity of the token kinds that produced output (embeddings excluded):
+ * the base of the per-1M-output figure. Null without a price or such kinds.
+ */
+export function outputKindsUsd(shares: KindShare[]): number | null {
+  const kinds = shares.filter(
+    (k) => k.output > 0 && kindInfo(k.kind).unit === "tokens",
   );
+  if (kinds.length === 0) return null;
+  let usd = 0;
+  for (const k of kinds) {
+    if (k.electricityUsd === null) return null;
+    usd += k.electricityUsd;
+  }
+  return usd;
 }

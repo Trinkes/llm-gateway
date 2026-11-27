@@ -83,6 +83,7 @@ interface KindRow {
   requests: number;
   units: number;
   output: number;
+  input: number;
   busy_s: number;
 }
 
@@ -217,11 +218,11 @@ const KINDS_SQL = `WITH ${PERIODS_CTE}
 SELECT p.i, r.method AS kind, COUNT(*) AS requests,
        COALESCE(SUM(r.units), 0) AS units,
        COALESCE(SUM(r.tokens_output), 0) AS output,
+       COALESCE(SUM(r.tokens_input), 0) AS input,
        SUM(r.latency_ms) / 1000.0 AS busy_s
   FROM p JOIN request_metrics r ON r.timestamp >= p.s AND r.timestamp < p.e
  WHERE ${BOX_ROWS_WHERE}
- GROUP BY p.i, r.method
- ORDER BY p.i, busy_s DESC, kind`;
+ GROUP BY p.i, r.method`;
 
 /** The model_pricing rows the box's requests can be priced from. */
 const RATES_SQL = `SELECT provider, model, input_per_1m, output_per_1m,
@@ -376,6 +377,7 @@ export async function loadPowerData(
       requests: row.requests,
       units: row.units,
       output: row.output,
+      input: row.input,
       busySeconds: row.busy_s,
     });
   }
