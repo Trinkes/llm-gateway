@@ -9,8 +9,9 @@ const decoder = new TextDecoder();
 
 /**
  * Input (audio) and output (text) tokens of a transcription reply, or null
- * when the reply is not JSON, has no `usage`, or its counts are not
- * non-negative numbers (such a reply costs 0).
+ * when the reply is not JSON, has no `usage`, its `usage.type` is not
+ * `tokens`, or its counts are not non-negative numbers (such a reply costs 0).
+ * Cached input tokens are still audio and are priced as input.
  */
 export function transcriptionUsage(reply: Uint8Array): TokenUsage | null {
   let json: unknown;
@@ -20,6 +21,9 @@ export function transcriptionUsage(reply: Uint8Array): TokenUsage | null {
     return null;
   }
   if (!isObject(json) || !isObject(json.usage)) return null;
+  // OpenAI's `duration` usage (whisper-1) bills seconds, not tokens.
+  const type = json.usage.type;
+  if (type !== undefined && type !== "tokens") return null;
   const input = count(json.usage.input_tokens);
   const output = count(json.usage.output_tokens);
   if (input === null || output === null) return null;

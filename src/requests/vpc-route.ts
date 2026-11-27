@@ -55,7 +55,10 @@ export interface RouteRequest {
   body(upstreamModel: string): BodyInit;
   /** Upstream content type; null lets fetch set it (multipart). */
   contentType: string | null;
-  /** Output tokens to rate-limit and (when `priced`, without `replyUsage`) price the request at. */
+  /**
+   * Output tokens to rate-limit and (when `priced`, without `replyUsage`)
+   * price the request at.
+   */
   tokens: number;
   /** Count of the kind's unit for a successful request (request-kinds.ts). */
   units: number | null;
@@ -80,7 +83,7 @@ export interface VpcRouteSpec {
   ): Promise<Response>;
   /** Commit a 200 and send heartbeat spaces when the upstream is slow (JSON replies only). */
   heartbeat: boolean;
-  /** Price `tokens` as output tokens; otherwise the row costs 0. */
+  /** Price `tokens` as output tokens (or the reply, see `replyUsage`); otherwise the row costs 0. */
   priced: boolean;
   /**
    * [fork] W21: price a successful request from its reply instead of

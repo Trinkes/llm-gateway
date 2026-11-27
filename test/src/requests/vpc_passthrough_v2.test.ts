@@ -375,35 +375,89 @@ describe("audioTranscriptionsV2", () => {
     expect(mockRecord.mock.calls[0][2]).toMatchObject({ costUsd: 0 });
   });
 
-  it("sends no heartbeat spaces before a text transcript", async () => {
-    let answer: (r: Response) => void = () => {};
-    const fetcher = {
-      fetch: vi.fn(
-        () => new Promise<Response>((resolve) => (answer = resolve)),
-      ),
-    };
-    const pendingRes = audioTranscriptionsV2({
+  it.each(["text", "srt", "vtt", "diarized_json"])(
+    "refuses response_format %s, which carries no usage, before any upstream call",
+    async (format) => {
+      const fetcher = binding();
+      const res = await audioTranscriptionsV2({
+        request: formRequest("/v1/audio/transcriptions", {
+          model: "local-box/asr",
+          file: wav(),
+          response_format: format,
+        }),
+        env: envWith(fetcher),
+        apiKeyAuth: auth,
+        ctx,
+      });
+      expect(res.status).toBe(400);
+      expect(fetcher.fetch).not.toHaveBeenCalled();
+      expect(mockRecord).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["true", "1", "yes", ""])(
+    "refuses stream=%s before any upstream call",
+    async (stream) => {
+      const fetcher = binding();
+      const res = await audioTranscriptionsV2({
+        request: formRequest("/v1/audio/transcriptions", {
+          model: "local-box/asr",
+          file: wav(),
+          stream,
+        }),
+        env: envWith(fetcher),
+        apiKeyAuth: auth,
+        ctx,
+      });
+      expect(res.status).toBe(400);
+      expect(fetcher.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts stream=false", async () => {
+    const fetcher = binding(new Response('{"text":"x"}'));
+    const res = await audioTranscriptionsV2({
       request: formRequest("/v1/audio/transcriptions", {
         model: "local-box/asr",
         file: wav(),
-        response_format: "text",
+        stream: "false",
       }),
       env: envWith(fetcher),
       apiKeyAuth: auth,
       ctx,
-      timing: { graceMs: 1, heartbeatMs: 1000 },
     });
-    await new Promise((r) => setTimeout(r, 20));
-    answer(
-      new Response("Bom dia.", { headers: { "content-type": "text/plain" } }),
-    );
-    const res = await pendingRes;
-    const body = await res.text();
-    await settled();
-
-    expect(body).toBe("Bom dia.");
-    expect(res.headers.get("content-type")).toBe("text/plain");
+    expect(res.status).toBe(200);
+    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["response_format", "stream"])(
+    "refuses %s given twice or as a file",
+    async (field) => {
+      const fetcher = binding();
+      const twice = new FormData();
+      twice.append("model", "local-box/asr");
+      twice.append("file", wav());
+      twice.append(field, field === "stream" ? "false" : "json");
+      twice.append(field, field === "stream" ? "true" : "text");
+      const asFile = new FormData();
+      asFile.append("model", "local-box/asr");
+      asFile.append("file", wav());
+      asFile.append(field, new File(["json"], "f.txt"));
+      for (const form of [twice, asFile]) {
+        const res = await audioTranscriptionsV2({
+          request: new Request("https://gw.test/v1/audio/transcriptions", {
+            method: "POST",
+            body: form,
+          }),
+          env: envWith(fetcher),
+          apiKeyAuth: auth,
+          ctx,
+        });
+        expect(res.status).toBe(400);
+      }
+      expect(fetcher.fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it("requires a file", async () => {
     const fetcher = binding();
@@ -571,6 +625,10 @@ describe("audioTranscriptionsV2 pricing", () => {
       '{"text":"x","usage":{"input_tokens":-5,"output_tokens":29}}',
     ],
     ["duration usage", '{"text":"x","usage":{"type":"duration","seconds":4}}'],
+    [
+      "usage of another type",
+      '{"text":"x","usage":{"type":"duration","input_tokens":69,"output_tokens":29}}',
+    ],
     ["a reply that is not JSON", "Bom dia."],
   ])("records %s at cost 0", async (_label, body) => {
     const res = await transcribe(binding(new Response(body)));
@@ -584,6 +642,68 @@ describe("audioTranscriptionsV2 pricing", () => {
     });
     expect(mockSettle).not.toHaveBeenCalled();
     expect(mockMaybeDisable).not.toHaveBeenCalled();
+  });
+
+  it.each(["json", "verbose_json"])(
+    "still prices response_format %s",
+    async (format) => {
+      const fetcher = binding(new Response(reply));
+      await audioTranscriptionsV2({
+        request: formRequest("/v1/audio/transcriptions", {
+          model: "local-box/asr",
+          file: wav(),
+          response_format: format,
+        }),
+        env: envWith(fetcher),
+        apiKeyAuth: auth,
+        ctx,
+      });
+      await settled();
+      expect(mockRecord.mock.calls[0][2].costUsd).toBeCloseTo(expectedCost, 12);
+    },
+  );
+
+  it("prices a heartbeat reply that arrives in several chunks", async () => {
+    const { fetcher, answer } = slowFetcher();
+    const res = await transcribe(fetcher, { graceMs: 1, heartbeatMs: 1000 });
+    const bytes = new TextEncoder().encode(reply);
+    const cut = Math.floor(bytes.length / 2);
+    answer(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes.slice(0, 7));
+            controller.enqueue(bytes.slice(7, cut));
+            controller.enqueue(bytes.slice(cut));
+            controller.close();
+          },
+        }),
+      ),
+    );
+    const body = await res.text();
+    await settled();
+
+    expect(body.trimStart()).toBe(reply);
+    expect(mockRecord.mock.calls[0][2].costUsd).toBeCloseTo(expectedCost, 12);
+  });
+
+  it("records a direct reply whose body fails to read as a 502 at cost 0", async () => {
+    const broken = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error("connection reset"));
+        },
+      }),
+    );
+    const res = await transcribe(binding(broken));
+    await settled();
+
+    expect(res.status).toBe(502);
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 502,
+      costUsd: 0,
+    });
+    expect(mockGetModelPricing).not.toHaveBeenCalled();
   });
 
   it("records an upstream error at cost 0 without a price lookup", async () => {
