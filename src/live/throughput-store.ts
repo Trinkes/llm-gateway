@@ -1,4 +1,8 @@
 // [fork] W12: stored 10-minute request throughput per organization.
+import {
+  modelActivityWrites,
+  rollupModelActivity,
+} from "./model-activity-store";
 import { vpcProviders } from "./provider-binding";
 import { RECENT_WINDOW_S, rollupWindow } from "./rollup-window";
 import {
@@ -45,22 +49,33 @@ export async function rollupThroughputRecent(
        (organization_id, ts, decode_tps, decode_tps_max, prefill_tps, prefill_tps_max, requests)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
-  const writes = orgs.flatMap((org, i) => {
-    const rows = reads[i].results;
-    const counts = countRequests(rows, from, to, ROLLUP_S);
-    return rollupThroughput(spreadThroughput(rows, from, to, SAMPLE_S)).map(
-      (r, j) =>
-        insert.bind(
+  const writes = orgs
+    .flatMap((org, i) => {
+      const rows = reads[i].results;
+      const counts = countRequests(rows, from, to, ROLLUP_S);
+      return rollupThroughput(spreadThroughput(rows, from, to, SAMPLE_S)).map(
+        (r, j) =>
+          insert.bind(
+            org,
+            r.ts,
+            r.decode_tps,
+            r.decode_tps_max,
+            r.prefill_tps,
+            r.prefill_tps_max,
+            counts[j],
+          ),
+      );
+    })
+    .concat(
+      // [fork] W22: per-model activity from the same rows, same write batch.
+      orgs.flatMap((org, i) =>
+        modelActivityWrites(
+          env,
           org,
-          r.ts,
-          r.decode_tps,
-          r.decode_tps_max,
-          r.prefill_tps,
-          r.prefill_tps_max,
-          counts[j],
+          rollupModelActivity(reads[i].results, from, to),
         ),
+      ),
     );
-  });
   await env.DB.batch(writes);
 }
 

@@ -48,13 +48,17 @@ beforeAll(async () => {
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS provider_configs (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, config TEXT NOT NULL, UNIQUE(organization_id, provider));",
   );
-  await createBoxTables(env.DB, ["throughput_rollups"]);
+  await createBoxTables(env.DB, [
+    "throughput_rollups",
+    "model_activity_rollups",
+  ]);
 });
 
 beforeEach(async () => {
   await env.DB.exec("DELETE FROM request_metrics");
   await env.DB.exec("DELETE FROM provider_configs");
   await env.DB.exec("DELETE FROM throughput_rollups");
+  await env.DB.exec("DELETE FROM model_activity_rollups");
   await config("org_a", "box", { transport: "vpc", vpcBinding: "HALOGEN" });
   await config("org_b", "box", { transport: "vpc", vpcBinding: "HALOGEN" });
   await config("org_a", "openai", {});
@@ -109,6 +113,34 @@ describe("rollupThroughputRecent", () => {
       "SELECT COUNT(*) AS n FROM throughput_rollups",
     ).all<{ n: number }>();
     expect(results[0].n).toBe(24);
+  });
+
+  it("writes per-model rollups for providers with requests only", async () => {
+    await request("r1", "org_a", "box", 3060, 60_000);
+    await rollupThroughputRecent(e, NOW);
+    const { results } = await env.DB.prepare(
+      "SELECT organization_id, provider, method, ts, busy, requests FROM model_activity_rollups ORDER BY ts",
+    ).all<{
+      organization_id: string;
+      provider: string;
+      method: string;
+      ts: number;
+      busy: number;
+      requests: number;
+    }>();
+    // Only the busy bucket: idle buckets are not stored (the read fills them).
+    expect(results).toHaveLength(1);
+    expect(
+      results.every(
+        (r) =>
+          r.organization_id === "org_a" &&
+          r.provider === "box" &&
+          r.method === "chat",
+      ),
+    ).toBe(true);
+    const busy = results.find((r) => r.ts === 3000)!;
+    expect(busy.busy).toBeCloseTo(60 / 600);
+    expect(busy.requests).toBe(1);
   });
 
   it("does nothing when no org uses the box", async () => {

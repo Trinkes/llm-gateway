@@ -2,12 +2,16 @@
 import boxSamples from "../../../migrations/0006_box_samples.sql?raw";
 import hostMemInUse from "../../../migrations/0007_host_mem_in_use.sql?raw";
 import hostWallPower from "../../../migrations/0008_host_wall_power.sql?raw";
+import modelActivity from "../../../migrations/0010_model_activity_rollups.sql?raw";
 
 export type BoxTable =
-  "inference_samples" | "host_samples" | "throughput_rollups";
+  | "inference_samples"
+  | "host_samples"
+  | "throughput_rollups"
+  | "model_activity_rollups";
 
 /** One statement per entry, comments and newlines removed (exec needs one per line). */
-const STATEMENTS = [boxSamples, hostMemInUse, hostWallPower]
+const STATEMENTS = [boxSamples, hostMemInUse, hostWallPower, modelActivity]
   .join(";")
   .split(";")
   .map((s) => s.replace(/--.*$/gm, "").replace(/\s+/g, " ").trim())
