@@ -83,6 +83,28 @@ describe("modelActivityWrites / modelActivityRollupsStatement", () => {
     await createBoxTables(env.DB, ["model_activity_rollups"]);
   });
 
+  it("packs rows into multi-row inserts under D1's 100 bound-parameter limit", async () => {
+    await env.DB.exec("DELETE FROM model_activity_rollups");
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      ...rollupModelActivity(ROWS, 0, 1200)[0],
+      ts: i * 600,
+    }));
+    const writes = modelActivityWrites(e, "org_pack", many);
+    expect(writes).toHaveLength(3);
+    await env.DB.batch(writes);
+    const { results } = await modelActivityRollupsStatement(
+      e,
+      "org_pack",
+      0,
+      20 * 600,
+    ).all();
+    expect(results).toHaveLength(20);
+  });
+
+  it("writes nothing for no rollups", () => {
+    expect(modelActivityWrites(e, "org_pack", [])).toEqual([]);
+  });
+
   it("stores rollups per org and reads them back in order, replacing on re-run", async () => {
     const rollups = rollupModelActivity(ROWS, 0, 1200);
     await env.DB.batch(modelActivityWrites(e, "org_a", rollups));

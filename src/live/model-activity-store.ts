@@ -82,34 +82,51 @@ export function rolledUpTo(rows: { ts: number }[], from: number): number {
   return rows.reduce((end, r) => Math.max(end, r.ts + ROLLUP_S), from);
 }
 
-/** `INSERT OR REPLACE` statements for `rollups`, for the caller's write batch. */
+const COLUMNS = 12;
+/** D1 binds at most 100 parameters per statement: 8 rows of 12 columns. */
+const ROWS_PER_INSERT = Math.floor(100 / COLUMNS);
+
+/**
+ * Multi-row `INSERT OR REPLACE` statements for `rollups`, for the caller's
+ * write batch: 8 rows each, so a daily 24 h recompute stays far below D1's
+ * per-invocation query limit.
+ */
 export function modelActivityWrites(
   env: Env,
   orgId: string,
   rollups: ModelActivityRollup[],
 ): D1PreparedStatement[] {
-  const insert = env.DB.prepare(
-    `INSERT OR REPLACE INTO model_activity_rollups
-       (organization_id, provider, method, ts, busy, busy_max, requests,
-        errors, latency_ms_sum, tokens_input, tokens_output, units)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  return rollups.map((r) =>
-    insert.bind(
-      orgId,
-      r.provider,
-      r.method,
-      r.ts,
-      r.busy,
-      r.busy_max,
-      r.requests,
-      r.errors,
-      r.latency_ms_sum,
-      r.tokens_input,
-      r.tokens_output,
-      r.units,
-    ),
-  );
+  const statements: D1PreparedStatement[] = [];
+  for (let i = 0; i < rollups.length; i += ROWS_PER_INSERT) {
+    const chunk = rollups.slice(i, i + ROWS_PER_INSERT);
+    const values = chunk
+      .map(() => `(${new Array(COLUMNS).fill("?").join(", ")})`)
+      .join(", ");
+    statements.push(
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO model_activity_rollups
+           (organization_id, provider, method, ts, busy, busy_max, requests,
+            errors, latency_ms_sum, tokens_input, tokens_output, units)
+         VALUES ${values}`,
+      ).bind(
+        ...chunk.flatMap((r) => [
+          orgId,
+          r.provider,
+          r.method,
+          r.ts,
+          r.busy,
+          r.busy_max,
+          r.requests,
+          r.errors,
+          r.latency_ms_sum,
+          r.tokens_input,
+          r.tokens_output,
+          r.units,
+        ]),
+      ),
+    );
+  }
+  return statements;
 }
 
 /**
