@@ -256,6 +256,35 @@ describe("imageGenerationsV2", () => {
     );
   });
 
+  // A key bound to a provider only ever routes to that provider (as chat).
+  it("refuses a key bound to another provider", async () => {
+    const binding = { fetch: vi.fn() };
+    const apiKeyAuth = {
+      ...baseAuth,
+      scopes: { defaultProvider: "local-chat" },
+    } as ApiKeyAuth;
+
+    const res = await generate(boxEnv(binding), { apiKeyAuth });
+    const body = (await res.json()) as { error: { code: string } };
+
+    expect(res.status).toBe(403);
+    expect(body.error.code).toBe("provider_mismatch");
+    expect(binding.fetch).not.toHaveBeenCalled();
+    expect(mockCheckRateLimits).not.toHaveBeenCalled();
+  });
+
+  it("accepts a bound key naming its own provider explicitly", async () => {
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+    const apiKeyAuth = {
+      ...baseAuth,
+      scopes: { defaultProvider: "local-box" },
+    } as ApiKeyAuth;
+
+    const res = await generate(boxEnv(binding), { apiKeyAuth });
+
+    expect(res.status).toBe(200);
+  });
+
   it("returns 429 when rate limited", async () => {
     mockCheckRateLimits.mockResolvedValue({ allowed: false, retryAfter: 7 });
     const binding = { fetch: vi.fn() };
