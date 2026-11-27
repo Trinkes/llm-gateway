@@ -18,7 +18,7 @@ const SIZE_PATTERN = /^(\d+)x(\d+)$/;
 /**
  * Output tokens for an image request: each image's pixel area relative to
  * 1024x1024 times its quality's count, times the image count. A missing,
- * `auto` or unknown size is 1024x1024; a missing, `auto` or unknown quality
+ * `null`, `auto` or unknown size is 1024x1024; a missing, `auto` or unknown quality
  * is high (the upstream may pick its best).
  */
 export function imageOutputTokens(params: {
@@ -34,12 +34,13 @@ export function imageOutputTokens(params: {
 }
 
 /**
- * Whether a request's size can be priced as asked: missing, `auto`, or
- * `WIDTHxHEIGHT` with both sides positive. Anything else is refused, so the
+ * Whether a request's size can be priced as asked: missing, `null` (some
+ * client libraries send it for unset fields), `auto`, or `WIDTHxHEIGHT` with
+ * both sides positive. Anything else is refused, so the
  * upstream never renders a size other than the one priced.
  */
 export function isPriceableSize(size: unknown): boolean {
-  if (size === undefined || size === "auto") return true;
+  if (size === undefined || size === null || size === "auto") return true;
   return parsedPixels(size) !== null;
 }
 

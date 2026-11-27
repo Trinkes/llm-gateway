@@ -310,6 +310,23 @@ describe("imageGenerationsV2", () => {
     expect(res.status).toBe(200);
   });
 
+  it("accepts size null as a 1024x1024 image and sends no size", async () => {
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+
+    const res = await generate(boxEnv(binding), {
+      body: { model: "local-box/z-image-turbo", prompt: "a cat", size: null },
+    });
+    await settled();
+
+    expect(res.status).toBe(200);
+    expect(mockSettle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actualTokens: 4160 }),
+    );
+    const sent = JSON.parse(binding.fetch.mock.calls[0][1].body as string);
+    expect(sent).not.toHaveProperty("size");
+  });
+
   it("records a failed generation at cost 0 without a price lookup", async () => {
     const binding = {
       fetch: vi.fn().mockResolvedValue(new Response("boom", { status: 500 })),

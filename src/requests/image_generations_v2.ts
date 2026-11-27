@@ -265,6 +265,8 @@ export async function imageGenerationsV2(
     ...body,
     // [fork] W19: the upstream renders the image count that was charged.
     ...("n" in body ? { n: imageCount(body.n) } : {}),
+    // [fork] W19: a null size was priced as unset, so it is sent as unset.
+    ...(body.size === null ? { size: undefined } : {}),
     model: upstreamModelId(config.settings, model),
   });
   const upstream = client.imageGenerations(upstreamBody, {
