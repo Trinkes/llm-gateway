@@ -147,7 +147,24 @@ describe("imageGenerationsV2", () => {
       model: "z-image-turbo",
       method: "image",
     });
-    expect(outcome).toEqual({ statusCode: 200, costUsd: 0 });
+    expect(outcome).toEqual({ statusCode: 200, costUsd: 0, units: 1 });
+  });
+
+  it.each([
+    [4, 4],
+    [undefined, 1],
+    [0, 1],
+    [11, 1],
+    ["2", 1],
+  ])("records units for n=%j as %i", async (n, units) => {
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+
+    await generate(boxEnv(binding), {
+      body: { model: "local-box/z-image-turbo", prompt: "a cat", n },
+    });
+    await settled();
+
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ units });
   });
 
   it("logs instead of failing when the request row cannot be written", async () => {

@@ -36,7 +36,7 @@ async function lastRow() {
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS model_pricing (provider TEXT NOT NULL, model TEXT NOT NULL, input_per_1m REAL NOT NULL DEFAULT 0, output_per_1m REAL NOT NULL DEFAULT 0, cache_read_per_1m REAL NOT NULL DEFAULT 0, cache_write_per_1m REAL NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (provider, model));",
@@ -118,6 +118,29 @@ describe("recordChatRequest", () => {
       usage: { input: 50, output: 10, cacheRead: 0, cacheWrite: 0 },
     });
     expect(await lastRow()).toMatchObject({ ttft_ms: null, decode_ms: null });
+  });
+
+  it("stores the unit count and the kind for non-token kinds", async () => {
+    await recordChatRequest(
+      envNoBuffer,
+      { ...attempt("z-image"), method: "image" },
+      { statusCode: 200, costUsd: 0, units: 4 },
+    );
+    expect(await lastRow()).toMatchObject({ method: "image", units: 4 });
+  });
+
+  it("stores an unknown kind as given with NULL units", async () => {
+    await recordChatRequest(
+      envNoBuffer,
+      { ...attempt("whisper"), method: "audio" },
+      { statusCode: 200 },
+    );
+    expect(await lastRow()).toMatchObject({ method: "audio", units: null });
+  });
+
+  it("leaves units NULL for chat", async () => {
+    await recordChatRequest(envNoBuffer, attempt(), { statusCode: 200 });
+    expect(await lastRow()).toMatchObject({ method: "chat", units: null });
   });
 
   it("records errors without usage", async () => {

@@ -16,6 +16,7 @@ import {
 import { checkRateLimits } from "../llm/rate-limit";
 import { resolveFetcher, type UpstreamFetcher } from "../llm/transport";
 import { V1OpenAICompatibleClient } from "../llm/v1-provider";
+import { imageCount } from "../metrics/request-kinds";
 import { recordChatRequest, type ChatAttempt } from "../metrics/request-logger";
 import { ApiKeyAuth } from "../types";
 
@@ -198,6 +199,7 @@ export async function imageGenerationsV2(
       recordChatRequest(env, attempt, {
         statusCode,
         costUsd: 0,
+        units: imageCount(body.n), // [fork] W17
         ...(errorMessage ? { errorMessage } : {}),
       }).catch((err) => console.error("failed to record image metrics", err)),
     );

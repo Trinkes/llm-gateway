@@ -8,7 +8,7 @@ export interface ChatAttempt {
   startedAt: number;
   provider: string;
   model: string;
-  method: "chat" | "image"; // [fork] W15
+  method: string; // [fork] W15, W17: request kind, see request-kinds.ts
 }
 
 const EMPTY_USAGE: TokenUsage = {
@@ -34,6 +34,8 @@ export async function recordChatRequest(
     cacheHit?: number;
     /** Streamed replies only: time to first output and decode duration. */
     timings?: StreamTimings | null;
+    /** [fork] W17: count of the kind's own unit when it is not tokens. */
+    units?: number | null;
   },
 ): Promise<void> {
   const usage = outcome.usage ?? EMPTY_USAGE;
@@ -66,6 +68,7 @@ export async function recordChatRequest(
     error_message: outcome.errorMessage ?? null,
     ttft_ms: outcome.timings?.ttftMs ?? null,
     decode_ms: outcome.timings?.decodeMs ?? null,
+    units: outcome.units ?? null,
   };
   await pushMetric(env, draft);
 }
