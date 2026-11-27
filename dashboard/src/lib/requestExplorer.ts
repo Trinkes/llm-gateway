@@ -29,6 +29,7 @@ export const FILTER_KEYS = [
   "apiKeyId",
   "status",
   "cache",
+  "kind", // [fork] W17
 ] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 

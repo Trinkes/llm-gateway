@@ -1,6 +1,7 @@
 // [fork] W13: what the box costs in electricity, and how that compares with
 // paying a cloud API for the same tokens.
 import { PowerDailyChart } from "../components/PowerDailyChart";
+import { PowerKindsCard } from "../components/PowerKindsCard";
 import { PowerWattsChart } from "../components/PowerWattsChart";
 import {
   Button,
@@ -97,7 +98,7 @@ function CloudCard({
         />
       </div>
       <p className="mt-4 text-sm text-gray-600">
-        Per 1M output tokens: box{" "}
+        Per 1M output tokens (the token kinds' share of the box's energy): box{" "}
         <strong>{fmtUsdPrecise(totals.electricityPer1mOutputUsd)}</strong> vs
         cloud <strong>{fmtUsdPrecise(totals.cloudPer1mOutputUsd)}</strong>.
         Electricity includes idle time, so a quiet period can cost more per
@@ -340,6 +341,8 @@ export function PowerPage() {
           <p className="text-xs text-gray-500">{modelLabel(r.fallbackModel)}</p>
 
           <CloudCard totals={t} rates={r.cloudRates} />
+
+          <PowerKindsCard kinds={t.kinds ?? []} />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card

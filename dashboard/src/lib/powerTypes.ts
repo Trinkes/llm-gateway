@@ -1,4 +1,5 @@
 // [fork] W13: shapes of the /api/power responses (mirror of src/power/*).
+import type { KindUnit } from "./requestKinds";
 
 /** A model_pricing row the box's tokens are priced from (USD per 1M). */
 export interface CloudRate {
@@ -28,6 +29,23 @@ export interface TokenSums {
   requests: number;
 }
 
+/** [fork] W17: one request kind's share of the box's energy (src/power/kind-energy.ts). */
+export interface KindEnergy {
+  kind: string;
+  unit: KindUnit;
+  label: string;
+  requests: number;
+  units: number;
+  busySeconds: number;
+  /** Share of all kinds' busy seconds, 0..1. */
+  share: number;
+  kwh: number;
+  electricityUsd: number | null;
+  perUnitUsd: number | null;
+  /** What perUnitUsd is priced per ("1M output tokens", "image", ...); null with it. */
+  perUnit: string | null;
+}
+
 export interface PowerTotals {
   effectiveS: number;
   measuredS: number;
@@ -52,6 +70,8 @@ export interface PowerTotals {
   savingsUsd: number | null;
   electricityPer1mOutputUsd: number | null;
   cloudPer1mOutputUsd: number | null;
+  /** [fork] W17: energy split by request kind. */
+  kinds: KindEnergy[];
 }
 
 /** [fork] W14: how APU-only time is turned into wall watts. */

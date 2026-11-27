@@ -1,3 +1,4 @@
+import { KindUsageCard } from "../components/KindUsageCard";
 import { RequestCacheBadge } from "../components/RequestCacheBadge";
 import { RequestStatusBadge } from "../components/RequestStatusBadge";
 import { TimeRangeControl } from "../components/TimeRangeControl";
@@ -5,6 +6,8 @@ import {
   Badge,
   Card,
   EmptyState,
+  Label,
+  Select,
   Spinner,
   StatCard,
   Tooltip,
@@ -14,6 +17,7 @@ import {
   CacheUsageRow,
   KeyUsage,
   LatencyStat,
+  RequestFacet,
   RequestRow,
   SpeedStat,
 } from "../lib/api";
@@ -30,15 +34,28 @@ import {
   rowDecodeTps,
 } from "../lib/format";
 import { NO_API_KEY } from "../lib/requestExplorer";
+import { formatRowUsage, KindUsage, kindOptions } from "../lib/requestKinds";
 import { ALL_RANGES } from "../lib/timeRange";
 import { useTimeRange } from "../lib/useTimeRange";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 export function AnalyticsPage() {
   const navigate = useNavigate();
   const time = useTimeRange(ALL_RANGES, "24h");
   const windowQuery = `start=${time.start}&end=${time.end}`;
+  // [fork] W17: optional kind filter for the summary and recent requests.
+  const [kind, setKind] = useState("");
+  const kindQuery = kind ? `&kind=${encodeURIComponent(kind)}` : "";
+  const facets = useQuery({
+    queryKey: ["analytics-facets", windowQuery],
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      apiGet<{ facets: RequestFacet[] }>(
+        `/api/metrics/requests/facets?${windowQuery}`,
+      ),
+  });
   const rangeParam = `range=${time.range}`;
   const openKey = (apiKeyId: string | null) =>
     navigate(
@@ -49,7 +66,7 @@ export function AnalyticsPage() {
   const openRequest = (id: string) =>
     navigate(`/requests?${rangeParam}&request=${encodeURIComponent(id)}`);
   const summary = useQuery({
-    queryKey: ["analytics-summary", windowQuery],
+    queryKey: ["analytics-summary", windowQuery, kind],
     placeholderData: keepPreviousData,
     queryFn: () =>
       apiGet<{
@@ -64,8 +81,10 @@ export function AnalyticsPage() {
           tokensCacheWrite?: number | null;
           responseCacheHits?: number | null;
           promptCacheHitRate?: number | null;
+          /** [fork] W17 */
+          byKind?: KindUsage[];
         };
-      }>(`/api/metrics/summary?${windowQuery}`),
+      }>(`/api/metrics/summary?${windowQuery}${kindQuery}`),
   });
   const latency = useQuery({
     queryKey: ["analytics-latency", windowQuery],
@@ -92,11 +111,11 @@ export function AnalyticsPage() {
       apiGet<{ keys: KeyUsage[] }>(`/api/metrics/keys?${windowQuery}`),
   });
   const requests = useQuery({
-    queryKey: ["analytics-requests", windowQuery],
+    queryKey: ["analytics-requests", windowQuery, kind],
     placeholderData: keepPreviousData,
     queryFn: () =>
       apiGet<{ requests: RequestRow[] }>(
-        `/api/metrics/requests?${windowQuery}&limit=25`,
+        `/api/metrics/requests?${windowQuery}&limit=25${kindQuery}`,
       ),
   });
 
@@ -139,11 +158,24 @@ export function AnalyticsPage() {
             {time.option.label} across all providers and models.
           </p>
         </div>
-        <TimeRangeControl
-          time={time}
-          allowed={ALL_RANGES}
-          refreshing={summary.isFetching}
-        />
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-44">
+            <Label>Kind</Label>
+            <Select
+              value={kind}
+              onChange={(v) => setKind(v as string)}
+              options={[
+                { value: "", label: "All kinds" },
+                ...kindOptions(facets.data?.facets ?? []),
+              ]}
+            />
+          </div>
+          <TimeRangeControl
+            time={time}
+            allowed={ALL_RANGES}
+            refreshing={summary.isFetching}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
@@ -190,6 +222,8 @@ export function AnalyticsPage() {
           hint="served by the proxy, no upstream call"
         />
       </div>
+
+      <KindUsageCard kinds={s.byKind ?? []} />
 
       <Card
         title="Usage by API key"
@@ -293,6 +327,7 @@ export function AnalyticsPage() {
               <thead>
                 <tr className="border-b border-gray-100 text-xs uppercase tracking-wide text-gray-400">
                   <th className="px-5 py-3 font-medium">Provider</th>
+                  <th className="px-5 py-3 font-medium">Kind</th>
                   <th className="px-5 py-3 font-medium">Requests</th>
                   <th className="px-5 py-3 font-medium">p50</th>
                   <th className="px-5 py-3 font-medium">p95</th>
@@ -303,10 +338,11 @@ export function AnalyticsPage() {
               <tbody>
                 {latency.data!.latency.map((l) => (
                   <tr
-                    key={l.provider}
+                    key={`${l.provider}:${l.kind}`}
                     className="border-b border-gray-50 last:border-0"
                   >
                     <td className="px-5 py-3 font-medium">{l.provider}</td>
+                    <td className="px-5 py-3 text-gray-600">{l.kind}</td>
                     <td className="px-5 py-3">{fmtCount(l.requests)}</td>
                     <td className="px-5 py-3">{fmtMs(l.p50)}</td>
                     <td className="px-5 py-3">{fmtMs(l.p95)}</td>
@@ -481,14 +517,13 @@ export function AnalyticsPage() {
                   <th className="px-5 py-3 font-medium">Key</th>
                   <th className="px-5 py-3 font-medium">Provider</th>
                   <th className="px-5 py-3 font-medium">Model</th>
+                  <th className="px-5 py-3 font-medium">Kind</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium">Cache</th>
                   <th className="px-5 py-3 font-medium">Latency</th>
                   <th className="px-5 py-3 font-medium">TTFT</th>
                   <th className="px-5 py-3 text-right font-medium">Tok/s</th>
-                  <th className="px-5 py-3 text-right font-medium">
-                    Tokens (in/out)
-                  </th>
+                  <th className="px-5 py-3 text-right font-medium">Usage</th>
                   <th className="px-5 py-3 text-right font-medium">Cost</th>
                 </tr>
               </thead>
@@ -521,6 +556,7 @@ export function AnalyticsPage() {
                       <td className="px-5 py-3 text-gray-600">
                         {r.model || "—"}
                       </td>
+                      <td className="px-5 py-3 text-gray-600">{r.method}</td>
                       <td className="px-5 py-3">
                         <RequestStatusBadge
                           status={r.status_code}
@@ -536,7 +572,7 @@ export function AnalyticsPage() {
                         {fmtTps(rowDecodeTps(r.tokens_output, r.decode_ms))}
                       </td>
                       <td className="px-5 py-3 text-right text-gray-600">
-                        {r.tokens_input ?? 0} / {r.tokens_output ?? 0}
+                        {formatRowUsage(r)}
                       </td>
                       <td
                         className="px-5 py-3 text-right text-gray-700"
