@@ -149,6 +149,23 @@ describe("countRequests", () => {
     );
     expect(counts).toEqual([1, 1, 1]);
   });
+
+  // [fork] W17: a token-less image row is still active load.
+  it("counts a token-less image request that adds no tok/s", () => {
+    const image = req({
+      timestamp: 125,
+      latency_ms: 20_000,
+      ttft_ms: null,
+      decode_ms: null,
+      prefill_tokens: 0,
+      tokens_output: 0,
+    });
+    const pts = spreadThroughput([image], 100, 130, 10);
+    expect(pts.every((p) => p.decodeTps === 0 && p.prefillTps === 0)).toBe(
+      true,
+    );
+    expect(countRequests([image], 100, 130, 10)).toEqual([1, 1, 1]);
+  });
 });
 
 describe("rollupThroughput", () => {

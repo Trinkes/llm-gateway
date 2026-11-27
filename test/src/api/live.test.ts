@@ -213,6 +213,61 @@ describe("GET /api/live", () => {
     expect(body.snapshot.throughput).toEqual([]);
   });
 
+  // [fork] W17: the last request's kind info lets the dashboard render by unit.
+  async function lastOf(org: string) {
+    const res = await new Hono<AppBindings>()
+      .use("*", async (c, next) => {
+        c.set("session", { organizationId: org } as SessionAuth);
+        await next();
+      })
+      .route("/api/live", liveRouter)
+      .request("/api/live", {}, env);
+    return ((await res.json()) as { snapshot: LiveSnapshot }).snapshot;
+  }
+
+  async function insertKindRow(
+    org: string,
+    method: string,
+    units: number | null,
+  ) {
+    await env.DB.prepare(
+      `INSERT INTO request_metrics
+         (id, organization_id, timestamp, provider, model, method, status_code,
+          latency_ms, tokens_input, tokens_output, cost_usd, cache_hit, units)
+       VALUES (?, ?, ?, 'local-m5', 'flux', ?, 200, 30000, NULL, NULL, 0, 0, ?)`,
+    )
+      .bind(`req_${org}`, org, NOW - 3, method, units)
+      .run();
+  }
+
+  it("a last image request carries units and the images unit", async () => {
+    await insertKindRow("org_live_image", "image", 2);
+    const snap = await lastOf("org_live_image");
+    expect(snap.lastRequest?.units).toBe(2);
+    expect(snap.lastRequest?.method).toBe("image");
+    expect(snap.lastRequestKind).toEqual({
+      kind: "image",
+      unit: "images",
+      label: "Image",
+    });
+  });
+
+  it("an unknown last kind has no unit and labels itself", async () => {
+    await insertKindRow("org_live_audio", "audio", null);
+    const snap = await lastOf("org_live_audio");
+    expect(snap.lastRequestKind).toEqual({
+      kind: "audio",
+      unit: null,
+      label: "audio",
+    });
+  });
+
+  it("a chat last request has the tokens unit; no request has no kind", async () => {
+    const { body } = await get({});
+    expect(body.snapshot.lastRequestKind?.unit).toBe("tokens");
+    expect((await lastOf("org_empty")).lastRequestKind).toBeNull();
+  });
+
   it("requires a session", async () => {
     const res = await createApp().request("/api/live", {}, env);
     expect(res.status).toBe(401);

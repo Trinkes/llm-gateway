@@ -3,6 +3,15 @@
 // through the fallback model (which carries the overhead setting when there is
 // no plug data), never on top of a wall reading.
 import { modelWatts, type FallbackModel } from "./fallback-model";
+import {
+  addKindShares,
+  attributeEnergy,
+  kindEnergy,
+  tokenKindsUsd,
+  type KindBusy,
+  type KindEnergy,
+  type KindShare,
+} from "./kind-energy";
 import type { Period } from "./periods";
 import type { IdleStats } from "./power-query";
 import type { PowerSettings } from "./power-settings";
@@ -33,6 +42,8 @@ export interface PeriodRaw extends Period {
   cloudUsd: number;
   /** Requests whose provider/model has no `model_pricing` row. */
   unpricedRequests: number;
+  /** [fork] W17: each request kind's busy time, for the energy split. */
+  kinds: KindBusy[];
 }
 
 export interface PowerTotals {
@@ -62,8 +73,11 @@ export interface PowerTotals {
   /** Requests left out of `cloudUsd` because they have no rate. */
   unpricedRequests: number;
   savingsUsd: number | null;
+  /** [fork] W17: token kinds' share of the electricity per 1M output tokens. */
   electricityPer1mOutputUsd: number | null;
   cloudPer1mOutputUsd: number | null;
+  /** [fork] W17: the energy split by each kind's busy time. */
+  kinds: KindEnergy[];
 }
 
 export type PeriodTotals = PowerTotals & Period;
@@ -119,33 +133,45 @@ function sourceOf(wallS: number, measuredS: number): PowerTotals["source"] {
   return wallS === 0 ? "apu" : "mixed";
 }
 
-/** Totals for one set of sums; `fillW` is the watts gaps are estimated at. */
+/** Splits a range's energy and electricity across its kinds. */
+type KindSplit = (kwh: number, electricityUsd: number | null) => KindShare[];
+
+/**
+ * Totals for one set of sums; `fillW` is the watts gaps are estimated at.
+ * [fork] W17: `split` attributes the total energy to kinds; the shares come
+ * back too so the range totals can add them up.
+ */
 function totalsOf(
   x: Sums,
   fillW: number | null,
   s: PowerSettings,
-): PowerTotals {
+  split: KindSplit,
+): { totals: PowerTotals; shares: KindShare[] } {
   if (x.effectiveS === 0) {
     return {
-      effectiveS: 0,
-      measuredS: 0,
-      coverage: null,
-      measuredKwh: 0,
-      wallKwh: 0,
-      modelledKwh: 0,
-      estimatedKwh: 0,
-      totalKwh: 0,
-      avgW: null,
-      wallCoverage: null,
-      source: null,
-      peakW: null,
-      electricityUsd: null,
-      tokens: { ...EMPTY_TOKENS },
-      cloudUsd: null,
-      unpricedRequests: 0,
-      savingsUsd: null,
-      electricityPer1mOutputUsd: null,
-      cloudPer1mOutputUsd: null,
+      shares: [],
+      totals: {
+        effectiveS: 0,
+        measuredS: 0,
+        coverage: null,
+        measuredKwh: 0,
+        wallKwh: 0,
+        modelledKwh: 0,
+        estimatedKwh: 0,
+        totalKwh: 0,
+        avgW: null,
+        wallCoverage: null,
+        source: null,
+        peakW: null,
+        electricityUsd: null,
+        tokens: { ...EMPTY_TOKENS },
+        cloudUsd: null,
+        unpricedRequests: 0,
+        savingsUsd: null,
+        electricityPer1mOutputUsd: null,
+        cloudPer1mOutputUsd: null,
+        kinds: [],
+      },
     };
   }
   const measuredS = x.wallS + x.apuS;
@@ -158,7 +184,8 @@ function totalsOf(
   const electricityUsd =
     s.pricePerKwhUsd === undefined ? null : totalKwh * s.pricePerKwhUsd;
   const cloudUsd = cloudOrNull(x.cloud.usd, x.tokens, x.cloud.unpriced);
-  return {
+  const shares = split(totalKwh, electricityUsd);
+  const totals: PowerTotals = {
     effectiveS: x.effectiveS,
     measuredS,
     coverage: measuredS / x.effectiveS,
@@ -179,9 +206,14 @@ function totalsOf(
       cloudUsd === null || electricityUsd === null
         ? null
         : cloudUsd - electricityUsd,
-    electricityPer1mOutputUsd: per1mOutput(electricityUsd, x.tokens.output),
+    electricityPer1mOutputUsd: per1mOutput(
+      tokenKindsUsd(shares),
+      x.tokens.output,
+    ),
     cloudPer1mOutputUsd: per1mOutput(cloudUsd, x.tokens.output),
+    kinds: kindEnergy(shares),
   };
+  return { totals, shares };
 }
 
 const maxOrNull = (a: number | null, b: number | null) =>
@@ -254,12 +286,19 @@ export function summarize(
   const measuredS = all.wallS + all.apuS;
   const fillW =
     measuredS > 0 ? (all.wallWs + all.modelledWs) / measuredS : null;
+  const perPeriod = periods.map((p, i) =>
+    totalsOf(live[i], fillW, s, (kwh, usd) =>
+      attributeEnergy(p.kinds, kwh, usd),
+    ),
+  );
+  // [fork] W17: range kinds are the periods' attributed shares added up.
+  const rangeShares = addKindShares(perPeriod.map((x) => x.shares));
   return {
-    totals: totalsOf(all, fillW, s),
+    totals: totalsOf(all, fillW, s, () => rangeShares).totals,
     periods: periods.map((p, i) => ({
       start: p.start,
       end: p.end,
-      ...totalsOf(live[i], fillW, s),
+      ...perPeriod[i].totals,
     })),
   };
 }
