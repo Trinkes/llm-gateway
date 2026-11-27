@@ -205,7 +205,7 @@ export class V1OpenAICompatibleClient {
 
   /**
    * [fork] W20: `POST` any body to a fixed upstream path (the passthrough
-   * routes in vpc-routes.ts). `contentType: null` lets fetch set it, which a
+   * routes in vpc_passthrough_v2.ts). `contentType: null` lets fetch set it, which a
    * multipart body needs for its boundary.
    */
   async post(

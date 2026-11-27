@@ -372,6 +372,36 @@ describe("audioTranscriptionsV2", () => {
     expect(mockRecord.mock.calls[0][2]).toMatchObject({ costUsd: 0 });
   });
 
+  it("sends no heartbeat spaces before a text transcript", async () => {
+    let answer: (r: Response) => void = () => {};
+    const fetcher = {
+      fetch: vi.fn(
+        () => new Promise<Response>((resolve) => (answer = resolve)),
+      ),
+    };
+    const pendingRes = audioTranscriptionsV2({
+      request: formRequest("/v1/audio/transcriptions", {
+        model: "local-box/asr",
+        file: wav(),
+        response_format: "text",
+      }),
+      env: envWith(fetcher),
+      apiKeyAuth: auth,
+      ctx,
+      timing: { graceMs: 1, heartbeatMs: 1000 },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    answer(
+      new Response("Bom dia.", { headers: { "content-type": "text/plain" } }),
+    );
+    const res = await pendingRes;
+    const body = await res.text();
+    await settled();
+
+    expect(body).toBe("Bom dia.");
+    expect(res.headers.get("content-type")).toBe("text/plain");
+  });
+
   it("requires a file", async () => {
     const fetcher = binding();
     const res = await audioTranscriptionsV2({
@@ -509,6 +539,70 @@ describe("imageEditsV2", () => {
       ctx,
     });
     expect(res.status).toBe(400);
+  });
+
+  it.each(["size", "quality", "n", "model", "prompt"])(
+    "refuses a repeated %s field so the upstream gets what was priced",
+    async (field) => {
+      const fetcher = binding();
+      const form = new FormData();
+      form.append("model", "local-box/klein");
+      form.append("prompt", "x");
+      form.append("image", png());
+      form.append("size", "256x256");
+      form.append("quality", "low");
+      form.append("n", "1");
+      form.append(field, field === "size" ? "4096x4096" : "2");
+
+      const res = await imageEditsV2({
+        request: new Request("https://gw.test/v1/images/edits", {
+          method: "POST",
+          body: form,
+        }),
+        env: envWith(fetcher),
+        apiKeyAuth: auth,
+        ctx,
+      });
+
+      expect(res.status).toBe(400);
+      expect(fetcher.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a file where a priced field is expected", async () => {
+    const fetcher = binding();
+    const res = await imageEditsV2({
+      request: formRequest("/v1/images/edits", {
+        model: "local-box/klein",
+        prompt: "x",
+        image: png(),
+        size: png(),
+      }),
+      env: envWith(fetcher),
+      apiKeyAuth: auth,
+      ctx,
+    });
+    expect(res.status).toBe(400);
+    expect(fetcher.fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a repeated model on a transcription", async () => {
+    const fetcher = binding();
+    const form = new FormData();
+    form.append("model", "local-box/asr");
+    form.append("model", "other/asr");
+    form.append("file", wav());
+    const res = await audioTranscriptionsV2({
+      request: new Request("https://gw.test/v1/audio/transcriptions", {
+        method: "POST",
+        body: form,
+      }),
+      env: envWith(fetcher),
+      apiKeyAuth: auth,
+      ctx,
+    });
+    expect(res.status).toBe(400);
+    expect(fetcher.fetch).not.toHaveBeenCalled();
   });
 
   it("sends spaces then the image when the upstream is slow", async () => {

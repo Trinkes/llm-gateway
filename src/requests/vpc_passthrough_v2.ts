@@ -50,6 +50,25 @@ function copyForm(form: FormData, overrides: Record<string, string>): FormData {
   return copy;
 }
 
+/**
+ * Refuse a field given twice or as a file: the gateway reads the first value
+ * while an upstream may use another, so a priced field (size, quality, n) or
+ * the routing `model` could differ from what was checked.
+ */
+function singleTextFields(
+  form: FormData,
+  names: string[],
+): Response | undefined {
+  for (const name of names) {
+    const values = form.getAll(name);
+    if (values.length > 1) return invalid(`${name} must be given once`);
+    if (values.length === 1 && typeof values[0] !== "string") {
+      return invalid(`${name} must be text`);
+    }
+  }
+  return undefined;
+}
+
 function isFile(value: unknown): boolean {
   return typeof value === "object" && value !== null && "arrayBuffer" in value;
 }
@@ -74,6 +93,14 @@ const IMAGE_EDITS: VpcRouteSpec = {
   async parse(request): Promise<RouteRequest | Response> {
     const form = await readForm(request);
     if (form instanceof Response) return form;
+    const repeated = singleTextFields(form, [
+      "model",
+      "prompt",
+      "size",
+      "quality",
+      "n",
+    ]);
+    if (repeated) return repeated;
     const rawModel = text(form.get("model"));
     if (!rawModel) return invalid("model is required");
     if (!text(form.get("prompt"))) return invalid("prompt is required");
@@ -109,14 +136,21 @@ const TRANSCRIPTIONS: VpcRouteSpec = {
   async parse(request): Promise<RouteRequest | Response> {
     const form = await readForm(request);
     if (form instanceof Response) return form;
+    const repeated = singleTextFields(form, ["model"]);
+    if (repeated) return repeated;
     const rawModel = text(form.get("model"));
     if (!rawModel) return invalid("model is required");
     if (!isFile(form.get("file"))) return invalid("file is required");
+    const format = text(form.get("response_format"));
     return {
       rawModel,
       contentType: null,
       tokens: 0,
       units: null,
+      // Heartbeat spaces are only harmless in front of JSON: text, srt and
+      // vtt replies are passed through as sent.
+      heartbeat:
+        format === "" || format === "json" || format === "verbose_json",
       body: (upstreamModel) => copyForm(form, { model: upstreamModel }),
     };
   },

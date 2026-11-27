@@ -54,6 +54,7 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
     return errorBody(
       "provider_mismatch",
       `API key is bound to provider '${boundProvider}'; cannot use '${provider}'`,
+      403,
     );
   }
   const providerError = assertProviderAllowed(
@@ -176,11 +177,11 @@ function promptTokens(text: string): number {
   }
 }
 
-function errorBody(code: string, message: string): Response {
+function errorBody(code: string, message: string, status?: number): Response {
   return new Response(
     JSON.stringify({ error: { message, type: code, code } }),
     {
-      status: code === "upstream_error" ? 502 : 400,
+      status: status ?? (code === "upstream_error" ? 502 : 400),
       headers: { "Content-Type": "application/json" },
     },
   );

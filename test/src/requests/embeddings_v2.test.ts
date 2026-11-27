@@ -388,6 +388,7 @@ describe("embeddingsV2 over a vpc provider", () => {
       scopes: { defaultProvider: "other" },
     } as unknown as ApiKeyAuth);
 
+    expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe("provider_mismatch");
     expect(binding.fetch).not.toHaveBeenCalled();
   });

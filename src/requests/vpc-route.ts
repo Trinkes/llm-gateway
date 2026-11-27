@@ -55,6 +55,8 @@ export interface RouteRequest {
   tokens: number;
   /** Count of the kind's unit for a successful request (request-kinds.ts). */
   units: number | null;
+  /** Overrides the spec's `heartbeat` for this request (e.g. a text reply). */
+  heartbeat?: boolean;
 }
 
 export interface VpcRouteSpec {
@@ -286,7 +288,7 @@ export async function serveVpcRoute(
     { signal: abort.signal, contentType: parsed.contentType },
   );
 
-  if (!spec.heartbeat) {
+  if (!(parsed.heartbeat ?? spec.heartbeat)) {
     try {
       return await directResponse(await upstream, record);
     } catch (err) {
