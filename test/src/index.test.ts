@@ -41,6 +41,22 @@ describe("worker dispatch (V2)", () => {
     expect(res.status).toBe(401);
   });
 
+  // [fork] W15
+  it.each(["/v1/images/generations", "/images/generations"])(
+    "returns 401 for unauthenticated POST %s",
+    async (path) => {
+      const res = await SELF.fetch(`http://example.com${path}`, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ model: "m", prompt: "p" }),
+      });
+      expect(res.status).toBe(401);
+    },
+  );
+
   // [fork] W7
   it("requires a session for /api/health/upstreams", async () => {
     const res = await SELF.fetch("http://example.com/api/health/upstreams", {
@@ -155,6 +171,27 @@ describe("tenant prefix routing", () => {
     );
     expect(wrongTenant.status).toBe(403);
     expect((await wrongTenant.json()).error.message).toMatch(/prefix/i);
+  });
+
+  // [fork] W15
+  it.each([
+    "/proxy_abc123/v1/images/generations",
+    "/proxy_abc123/images/generations",
+  ])("routes a prefixed image generations path %s", async (path) => {
+    await insertOrg("org_b", { systemPrefix: "proxy_abc123" });
+    await insertKey("k_b", "org_b", "sk_b");
+
+    const res = await SELF.fetch(`http://example.com${path}`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer sk_b",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model: "openai/gpt-image-1", prompt: "a cat" }),
+    });
+
+    expect(res.status).toBe(400); // routed to org_b, openai not configured
+    expect((await res.json()).error.message).toMatch(/openai/i);
   });
 
   it("rejects a non-root tenant on the plain path with a hint", async () => {

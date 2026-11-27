@@ -1,4 +1,4 @@
-// [fork] W12: OpenAI-compatible image generations over a vpc provider.
+// [fork] W15: OpenAI-compatible image generations over a vpc provider.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getProviderConfig } from "~/src/llm/credential-store";
 import type { DecryptedProviderConfig } from "~/src/llm/credential-store";

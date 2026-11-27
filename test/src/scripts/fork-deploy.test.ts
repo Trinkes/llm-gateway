@@ -127,6 +127,7 @@ describe("forkOptionsFromEnv", () => {
     "custom-domain": undefined,
     "zero-price-provider": undefined,
     "host-metrics": undefined,
+    "vpc-health-path": undefined,
   };
 
   it("returns no options when neither flags nor env are set", () => {
@@ -136,6 +137,7 @@ describe("forkOptionsFromEnv", () => {
       customDomain: undefined,
       zeroPriceProviders: [],
       hostMetrics: [],
+      vpcHealthPaths: [],
     });
   });
 
@@ -146,6 +148,7 @@ describe("forkOptionsFromEnv", () => {
       CUSTOM_DOMAIN: " api.example.com ",
       ZERO_PRICE_PROVIDERS: "local-m5,,other",
       HOST_METRICS: "BOXSTATS=org_a, OTHER=*",
+      VPC_HEALTH_PATHS: "OTHER=/v1/models",
     });
     expect(out).toEqual({
       vpcServiceIds: [`HALOGEN=${SERVICE_ID}`, `OTHER=${SERVICE_ID}`],
@@ -153,6 +156,7 @@ describe("forkOptionsFromEnv", () => {
       customDomain: "api.example.com",
       zeroPriceProviders: ["local-m5", "other"],
       hostMetrics: ["BOXSTATS=org_a", "OTHER=*"],
+      vpcHealthPaths: ["OTHER=/v1/models"],
     });
   });
 
@@ -233,5 +237,54 @@ describe("applyForkOptions host metrics", () => {
       { HOST_METRICS: "BOXSTATS=org_env" },
     );
     expect(out.hostMetrics).toEqual(["BOXSTATS=org_flag"]);
+  });
+});
+
+// [fork] W15: per-binding health probe path.
+describe("applyForkOptions vpc health paths", () => {
+  it("writes VPC_HEALTH_PATHS for bound provider services", () => {
+    const p = prod();
+    applyForkOptions(p, {
+      vpcServiceIds: [`HALOGEN=${SERVICE_ID}`, `IMAGEGEN=${SERVICE_ID}`],
+      vpcAllow: ["HALOGEN=org_1", "IMAGEGEN=org_1"],
+      vpcHealthPaths: ["IMAGEGEN=/v1/models"],
+    });
+    expect(p.vars.VPC_BINDINGS).toBe("HALOGEN:org_1,IMAGEGEN:org_1");
+    expect(p.vars.VPC_HEALTH_PATHS).toBe("IMAGEGEN:/v1/models");
+  });
+
+  it("leaves VPC_HEALTH_PATHS unset without the option", () => {
+    const p = prod();
+    applyForkOptions(p, {
+      vpcServiceIds: [`HALOGEN=${SERVICE_ID}`],
+      vpcAllow: ["HALOGEN=org_1"],
+    });
+    expect(p.vars.VPC_HEALTH_PATHS).toBeUndefined();
+  });
+
+  it.each([
+    ["an unbound service", "NOPE=/v1/models"],
+    ["a host metrics service", "BOXSTATS=/metrics"],
+    ["a relative path", "IMAGEGEN=v1/models"],
+    ["a path with ..", "IMAGEGEN=/v1/../admin"],
+    ["a query", "IMAGEGEN=/v1/models?x=1"],
+    ["a missing path", "IMAGEGEN"],
+  ])("rejects %s", (_, entry) => {
+    expect(() =>
+      applyForkOptions(prod(), {
+        vpcServiceIds: [`IMAGEGEN=${SERVICE_ID}`, `BOXSTATS=${SERVICE_ID}`],
+        vpcAllow: ["IMAGEGEN=org_1"],
+        hostMetrics: ["BOXSTATS=org_1"],
+        vpcHealthPaths: [entry],
+      }),
+    ).toThrow(/--vpc-health-path/);
+  });
+
+  it("forkOptionsFromEnv prefers the --vpc-health-path flag", () => {
+    const out = forkOptionsFromEnv(
+      { "vpc-health-path": ["IMAGEGEN=/a"] },
+      { VPC_HEALTH_PATHS: "IMAGEGEN=/b" },
+    );
+    expect(out.vpcHealthPaths).toEqual(["IMAGEGEN=/a"]);
   });
 });

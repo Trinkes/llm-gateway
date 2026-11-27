@@ -1,4 +1,4 @@
-// [fork] W12: OpenAI-compatible image generations for OpenAI-compatible
+// [fork] W15: OpenAI-compatible image generations for OpenAI-compatible
 // providers (typically a self-hosted image server behind a vpc binding).
 import { TenantService } from "../db/tenant";
 import { getProviderConfig } from "../llm/credential-store";

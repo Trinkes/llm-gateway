@@ -13,7 +13,7 @@ const VPC_PATHS: Record<string, string> = {
   chatCompletionPath: "/v1/chat/completions",
   modelsPath: "/v1/models",
   embeddingsPath: "/v1/embeddings",
-  imagesPath: "/v1/images/generations", // [fork] W12
+  imagesPath: "/v1/images/generations", // [fork] W15
 };
 const VPC_ALLOWED_PATHS = new Set(Object.values(VPC_PATHS));
 
@@ -164,4 +164,23 @@ export function vpcBindingNames(
       (organizationId === undefined ||
         isAllowed(allowlist, name, organizationId)),
   );
+}
+
+const HEALTH_PATH_ENTRY_RE = /^([A-Z][A-Z0-9_]*):(\/[^\s?#]*)$/;
+
+/**
+ * [fork] W15: `VPC_HEALTH_PATHS="NAME:/path,..."`, the health probe path for
+ * VPC upstreams that do not serve the inference server's `GET /health`. A
+ * listed binding is also not an inference server, so the Live page and the
+ * box sampler skip it. Malformed entries are ignored.
+ */
+export function vpcHealthPaths(env: object): Map<string, string> {
+  const raw = (env as Record<string, unknown>).VPC_HEALTH_PATHS;
+  const out = new Map<string, string>();
+  if (typeof raw !== "string") return out;
+  for (const entry of raw.split(",")) {
+    const match = HEALTH_PATH_ENTRY_RE.exec(entry.trim());
+    if (match) out.set(match[1], match[2]);
+  }
+  return out;
 }

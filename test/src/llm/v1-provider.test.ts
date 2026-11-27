@@ -170,7 +170,7 @@ describe("V1OpenAICompatibleClient error responses without keys", () => {
   });
 });
 
-// [fork] W12: image generations through the same client.
+// [fork] W15: image generations through the same client.
 describe("V1OpenAICompatibleClient.imageGenerations", () => {
   afterEach(() => vi.unstubAllGlobals());
 

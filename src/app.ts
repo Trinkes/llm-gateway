@@ -23,6 +23,7 @@ import {
 } from "./middlewares/tenant-prefix";
 import { chatCompletionsV2 } from "./requests/chat_completions_v2";
 import { embeddingsV2 } from "./requests/embeddings_v2";
+import { imageGenerationsV2 } from "./requests/image_generations_v2";
 import { modelsV2 } from "./requests/models_v2";
 import { AppVariables } from "./types";
 import { Hono } from "hono";
@@ -240,6 +241,29 @@ export function createApp(): Hono<AppBindings> {
     tenantPrefixGuardMiddleware,
     embeddings,
   );
+
+  // [fork] W15: OpenAI-compatible image generations.
+  const imageGenerations = (c: import("hono").Context<AppBindings>) =>
+    imageGenerationsV2({
+      request: c.req.raw,
+      env: c.env,
+      apiKeyAuth: c.get("apiKeyAuth")!,
+      ctx: c.executionCtx,
+    });
+  for (const path of [
+    "/v1/images/generations",
+    "/:tenantPrefix/v1/images/generations",
+    "/images/generations",
+    "/:tenantPrefix/images/generations",
+  ]) {
+    app.post(
+      path,
+      tenantPrefixMiddleware,
+      apiKeyAuthMiddleware,
+      tenantPrefixGuardMiddleware,
+      imageGenerations,
+    );
+  }
 
   app.get(
     "/v1/models",

@@ -1,7 +1,12 @@
 // [fork] W7: health of VPC upstreams (the self-hosted box), checked by cron.
-import { vpcBindingNames, type UpstreamFetcher } from "../llm/transport";
+import {
+  vpcBindingNames,
+  vpcHealthPaths,
+  type UpstreamFetcher,
+} from "../llm/transport";
 
-const HEALTH_URL = "http://vpc.internal/health";
+const HEALTH_ORIGIN = "http://vpc.internal";
+const HEALTH_URL = `${HEALTH_ORIGIN}/health`;
 const HEALTH_TIMEOUT_MS = 10_000;
 const HEALTH_TTL_SECONDS = 3600;
 
@@ -19,8 +24,20 @@ function healthKey(binding: string): string {
 
 async function probe(
   binding: UpstreamFetcher | undefined,
+  path: string | undefined,
 ): Promise<{ ok: boolean; version: string | null }> {
   if (typeof binding?.fetch !== "function") return { ok: false, version: null };
+  // [fork] W15: a custom health path only has to answer 2xx.
+  if (path !== undefined) {
+    try {
+      const res = await binding.fetch(`${HEALTH_ORIGIN}${path}`, {
+        signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+      });
+      return { ok: res.ok, version: null };
+    } catch {
+      return { ok: false, version: null };
+    }
+  }
   try {
     const res = await binding.fetch(HEALTH_URL, {
       signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
@@ -42,10 +59,11 @@ export async function checkUpstreams(env: Env): Promise<void> {
     string,
     UpstreamFetcher | undefined
   >;
+  const paths = vpcHealthPaths(env);
   await Promise.all(
     vpcBindingNames(env).map(async (name) => {
       const startedAt = Date.now();
-      const result = await probe(bindings[name]);
+      const result = await probe(bindings[name], paths.get(name));
       const entry: UpstreamHealth = {
         binding: name,
         status: result.ok ? "ok" : "down",

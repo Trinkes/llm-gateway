@@ -50,6 +50,41 @@ describe("hostBinding", () => {
 });
 
 describe("inferenceBinding", () => {
+  // [fork] W15: an image server listed after the inference server.
+  it("picks the first listed binding when several are allowed", () => {
+    const halogen = fetcher();
+    const env = {
+      VPC_BINDINGS: `HALOGEN:${ORG},IMAGEGEN:${ORG}`,
+      HALOGEN: halogen,
+      IMAGEGEN: fetcher(),
+    };
+    expect(inferenceBinding(env, ORG)).toEqual({
+      name: "HALOGEN",
+      fetcher: halogen,
+    });
+    expect(samplerBindings(env).inference.map((b) => b.name)).toEqual([
+      "HALOGEN",
+      "IMAGEGEN",
+    ]);
+  });
+
+  it("skips bindings with their own health path", () => {
+    const halogen = fetcher();
+    const env = {
+      VPC_BINDINGS: `IMAGEGEN:${ORG},HALOGEN:${ORG}`,
+      VPC_HEALTH_PATHS: "IMAGEGEN:/v1/models",
+      HALOGEN: halogen,
+      IMAGEGEN: fetcher(),
+    };
+    expect(inferenceBinding(env, ORG)).toEqual({
+      name: "HALOGEN",
+      fetcher: halogen,
+    });
+    expect(samplerBindings(env).inference.map((b) => b.name)).toEqual([
+      "HALOGEN",
+    ]);
+  });
+
   it("uses VPC_BINDINGS for the org", () => {
     const halogen = fetcher();
     const env = { VPC_BINDINGS: `HALOGEN:${ORG}`, HALOGEN: halogen };

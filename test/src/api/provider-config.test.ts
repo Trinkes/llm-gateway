@@ -907,7 +907,7 @@ describe("VPC transport settings", () => {
     expect(mockFetchProviderModels).not.toHaveBeenCalled();
   });
 
-  // [fork] W12
+  // [fork] W15
   it("keeps an absolute imagesPath", async () => {
     mockSaveProviderConfig.mockResolvedValue(
       config({ provider: "local-m5", keys: [], settings: vpcSettings }),

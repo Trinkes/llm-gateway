@@ -139,6 +139,7 @@ const { values: opts, positionals } = (() => {
         "custom-domain": { type: "string" },
         "zero-price-provider": { type: "string", multiple: true },
         "host-metrics": { type: "string", multiple: true }, // [fork] W11
+        "vpc-health-path": { type: "string", multiple: true }, // [fork] W15
         "migrate-only": { type: "boolean", default: false },
         "skip-build": { type: "boolean", default: false },
         "skip-migrate": { type: "boolean", default: false },

@@ -111,6 +111,20 @@ describe("spreadThroughput", () => {
     expect(pts[1].decodeTps).toBeCloseTo(100);
   });
 
+  // [fork] W15: image generation rows carry no tokens.
+  it("adds no throughput for a token-less image request", () => {
+    const image = req({
+      latency_ms: 90_000,
+      ttft_ms: null,
+      decode_ms: null,
+      prefill_tokens: 0,
+      tokens_output: 0,
+    });
+    expect(spreadThroughput([req(), image], 100, 130, 10)).toEqual(
+      spreadThroughput([req()], 100, 130, 10),
+    );
+  });
+
   it("returns zeros for idle buckets", () => {
     const pts = spreadThroughput([], 100, 160, 10);
     expect(pts).toHaveLength(6);
@@ -276,8 +290,18 @@ describe("throughputRowsStatement", () => {
   it("counts stored input (already net of cache hits) plus cache writes as prefill", async () => {
     // tokens_input is stored with cache reads and writes already removed, so a
     // cache-heavy request (2000 prompt tokens, 1800 reused) prefilled 200.
-    await insert("heavy", { ts: 1001, input: 200, cacheRead: 1800, cached: 1800 });
-    await insert("write", { ts: 1002, input: 300, cacheWrite: 100, cached: 100 });
+    await insert("heavy", {
+      ts: 1001,
+      input: 200,
+      cacheRead: 1800,
+      cached: 1800,
+    });
+    await insert("write", {
+      ts: 1002,
+      input: 300,
+      cacheWrite: 100,
+      cached: 100,
+    });
     await insert("legacy", { ts: 1003, input: 500, cached: 50 });
     await insert("null", { ts: 1004, input: null, output: null });
     const { results } = await throughputRowsStatement(

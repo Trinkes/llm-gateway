@@ -13,7 +13,7 @@ export class V1OpenAICompatibleClient {
   private readonly chatCompletionPath: string;
   private readonly modelsPath: string;
   private readonly embeddingsPath: string;
-  private readonly imagesPath: string; // [fork] W12
+  private readonly imagesPath: string; // [fork] W15
   private readonly keys: string[];
   private readonly needsKey: boolean;
   private readonly extraHeaders: Record<string, string>;
@@ -28,7 +28,7 @@ export class V1OpenAICompatibleClient {
     chatCompletionPath?: string;
     modelsPath?: string;
     embeddingsPath?: string;
-    imagesPath?: string; // [fork] W12
+    imagesPath?: string; // [fork] W15
     keys: string[];
     rotationStrategy?: KeyRotationStrategy;
     custom?: {
@@ -37,7 +37,7 @@ export class V1OpenAICompatibleClient {
       chatCompletionPath?: string;
       modelsPath?: string;
       embeddingsPath?: string;
-      imagesPath?: string; // [fork] W12
+      imagesPath?: string; // [fork] W15
     };
     authHeaders?: Record<string, string>;
     /** [fork] W1: send requests through this binding instead of global fetch. */
@@ -81,7 +81,7 @@ export class V1OpenAICompatibleClient {
       options.embeddingsPath ??
       spec?.embeddingsPath ??
       (isCustom ? "/v1/embeddings" : "/embeddings");
-    // [fork] W12
+    // [fork] W15
     this.imagesPath =
       options.custom?.imagesPath ??
       options.imagesPath ??
@@ -181,7 +181,7 @@ export class V1OpenAICompatibleClient {
     });
   }
 
-  /** [fork] W12: OpenAI-compatible `POST images/generations`. */
+  /** [fork] W15: OpenAI-compatible `POST images/generations`. */
   async imageGenerations(
     body: string,
     init?: { signal?: AbortSignal },
