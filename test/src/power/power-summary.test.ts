@@ -547,6 +547,41 @@ describe("summarize kinds", () => {
     expect(totals.electricityPer1mOutputUsd).toBeNull();
   });
 
+  it("names the pricing basis of each per-unit figure", () => {
+    const embedding: KindBusy = {
+      ...chatBusy,
+      kind: "embedding",
+      output: 0,
+      busySeconds: 10,
+    };
+    const kinds = [chatBusy, embedding, imageBusy, audioBusy];
+    const { totals, periods } = summarize(
+      [{ ...raw[0], kinds }],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    for (const k of [totals.kinds, periods[0].kinds]) {
+      expect(Object.fromEntries(k.map((x) => [x.kind, x.perUnit]))).toEqual({
+        chat: "1M output tokens",
+        embedding: "1M input tokens",
+        image: "image",
+        audio: "request",
+      });
+    }
+    const unpriced = summarize([{ ...raw[0], kinds }], 0, 10_000, {}, none);
+    expect(unpriced.totals.kinds.every((x) => x.perUnit === null)).toBe(true);
+    const empty = summarize(
+      [{ ...raw[0], kinds: [{ ...imageBusy, units: 0 }] }],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    expect(empty.totals.kinds[0].perUnit).toBeNull();
+  });
+
   it("orders equal busy time by kind", () => {
     const { totals } = summarize(
       [{ ...raw[0], kinds: [imageBusy, { ...audioBusy, busySeconds: 30 }] }],

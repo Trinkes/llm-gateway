@@ -34,7 +34,13 @@ export interface KindEnergy {
    * output), per image, or per request (null unit).
    */
   perUnitUsd: number | null;
+  /** What `perUnitUsd` is priced per; null when it is null. */
+  perUnit: PerUnit | null;
 }
+
+/** The pricing basis of a kind's `perUnitUsd`, so clients never infer it. */
+export type PerUnit =
+  "1M output tokens" | "1M input tokens" | "image" | "request";
 
 /** A kind's busy sums with its attributed energy. */
 export interface KindShare extends KindBusy {
@@ -89,17 +95,24 @@ export function addKindBusy(a: KindBusy[], b: KindBusy[]): KindBusy[] {
 }
 
 /** The count a kind's electricity is divided by, and the scale of the result. */
-function unitBase(k: KindShare, unit: KindUnit): [number, number] {
+function unitBase(k: KindShare, unit: KindUnit): [number, number, PerUnit] {
   if (unit === "tokens") {
-    return k.output > 0 ? [k.output, 1e6] : [k.input, 1e6];
+    return k.output > 0
+      ? [k.output, 1e6, "1M output tokens"]
+      : [k.input, 1e6, "1M input tokens"];
   }
-  return [unit === "images" ? k.units : k.requests, 1];
+  return unit === "images" ? [k.units, 1, "image"] : [k.requests, 1, "request"];
 }
 
-function perUnitUsd(k: KindShare, unit: KindUnit): number | null {
-  if (k.electricityUsd === null) return null;
-  const [base, scale] = unitBase(k, unit);
-  return base === 0 ? null : (k.electricityUsd / base) * scale;
+function perUnitCost(
+  k: KindShare,
+  unit: KindUnit,
+): { perUnitUsd: number | null; perUnit: PerUnit | null } {
+  const [base, scale, perUnit] = unitBase(k, unit);
+  if (k.electricityUsd === null || base === 0) {
+    return { perUnitUsd: null, perUnit: null };
+  }
+  return { perUnitUsd: (k.electricityUsd / base) * scale, perUnit };
 }
 
 /** The API rows: unit and label attached, busiest kind first. */
@@ -118,7 +131,7 @@ export function kindEnergy(shares: KindShare[]): KindEnergy[] {
         share: k.busySeconds / busy,
         kwh: k.kwh,
         electricityUsd: k.electricityUsd,
-        perUnitUsd: perUnitUsd(k, unit),
+        ...perUnitCost(k, unit),
       };
     })
     .sort(
