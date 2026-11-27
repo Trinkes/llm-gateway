@@ -183,6 +183,7 @@ export function createApp(): Hono<AppBindings> {
       request: c.req.raw,
       env: c.env,
       apiKeyAuth: c.get("apiKeyAuth")!,
+      ctx: c.executionCtx, // [fork] W17
     });
 
   app.post(

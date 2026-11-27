@@ -51,7 +51,7 @@ async function get(bindings: Record<string, unknown>) {
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, emailVerified INTEGER NOT NULL, image TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL);",
@@ -211,6 +211,55 @@ describe("GET /api/live", () => {
     const body = (await res.json()) as { snapshot: LiveSnapshot };
     expect(body.snapshot.lastRequest).toBeNull();
     expect(body.snapshot.throughput).toEqual([]);
+  });
+
+  // [fork] W17: the last request's kind info lets the dashboard render by unit.
+  async function lastOf(org: string) {
+    const res = await new Hono<AppBindings>()
+      .use("*", async (c, next) => {
+        c.set("session", { organizationId: org } as SessionAuth);
+        await next();
+      })
+      .route("/api/live", liveRouter)
+      .request("/api/live", {}, env);
+    return ((await res.json()) as { snapshot: LiveSnapshot }).snapshot;
+  }
+
+  async function insertKindRow(
+    org: string,
+    method: string,
+    units: number | null,
+  ) {
+    await env.DB.prepare(
+      `INSERT INTO request_metrics
+         (id, organization_id, timestamp, provider, model, method, status_code,
+          latency_ms, tokens_input, tokens_output, cost_usd, cache_hit, units)
+       VALUES (?, ?, ?, 'local-m5', 'flux', ?, 200, 30000, NULL, NULL, 0, 0, ?)`,
+    )
+      .bind(`req_${org}`, org, NOW - 3, method, units)
+      .run();
+  }
+
+  it("a last image request carries units and the images unit", async () => {
+    await insertKindRow("org_live_image", "image", 2);
+    const snap = await lastOf("org_live_image");
+    expect(snap.lastRequest?.units).toBe(2);
+    expect(snap.lastRequest?.method).toBe("image");
+    expect(snap.lastRequest?.kind_unit).toBe("images");
+    expect(snap.lastRequest?.kind_label).toBe("Image");
+  });
+
+  it("an unknown last kind has no unit and labels itself", async () => {
+    await insertKindRow("org_live_audio", "audio", null);
+    const snap = await lastOf("org_live_audio");
+    expect(snap.lastRequest?.kind_unit).toBeNull();
+    expect(snap.lastRequest?.kind_label).toBe("audio");
+  });
+
+  it("a chat last request has the tokens unit; no request has no kind", async () => {
+    const { body } = await get({});
+    expect(body.snapshot.lastRequest?.kind_unit).toBe("tokens");
+    expect((await lastOf("org_empty")).lastRequest).toBeNull();
   });
 
   it("requires a session", async () => {

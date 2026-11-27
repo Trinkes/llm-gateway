@@ -1,5 +1,7 @@
 import type { TenantSettings } from "../db/tenant";
 import { nowSeconds } from "../utils/crypto";
+import { kindUsageStatement, toKindUsage, type KindUsage } from "./kind-usage";
+import { kindInfo, TOKEN_ROWS_SQL, type KindUnit } from "./request-kinds";
 
 export interface ModelPricing {
   provider: string;
@@ -82,6 +84,10 @@ export interface SpendRangeOptions {
   model?: string;
   /** Only this API key's traffic. */
   apiKeyId?: string;
+  /** [fork] W17: only this request kind (`request_metrics.method`). */
+  kind?: string;
+  /** [fork] W17: also compute `byKind` (one more statement, same round trip). */
+  withKinds?: boolean;
 }
 
 export interface SpendSummary {
@@ -102,6 +108,8 @@ export interface SpendSummary {
   /** Requests with at least one provider prompt-cache hit + their share. */
   promptCacheHits: number;
   promptCacheHitRate: number;
+  /** [fork] W17: the same window split per request kind. */
+  byKind: KindUsage[];
 }
 
 interface SpendRow {
@@ -115,6 +123,7 @@ interface SpendRow {
   tokens_cache_write: number | null;
   response_cache_hits: number | null;
   prompt_cache_hits: number | null;
+  token_requests: number | null;
 }
 
 /** Aggregated spend for a tenant over [start, end); tenant-scoped by definition. */
@@ -143,8 +152,14 @@ export async function spendForRange(
     where.push("api_key_id = ?");
     params.push(options.apiKeyId);
   }
+  if (options.kind) {
+    where.push("method = ?");
+    params.push(options.kind);
+  }
 
-  const row = await env.DB.prepare(
+  // [fork] W17: the per-kind split is opt-in and shares the round trip.
+  const whereSql = where.join(" AND ");
+  const totals = env.DB.prepare(
     `SELECT
        COUNT(*) AS requests,
        SUM(cost_usd) AS cost_usd,
@@ -155,15 +170,28 @@ export async function spendForRange(
        SUM(tokens_cache_read) AS tokens_cache_read,
        SUM(tokens_cache_write) AS tokens_cache_write,
        SUM(cache_hit) AS response_cache_hits,
-       COUNT(CASE WHEN tokens_cache_read > 0 THEN 1 END) AS prompt_cache_hits
-     FROM request_metrics WHERE ${where.join(" AND ")}`,
-  )
-    .bind(...params)
-    .first<SpendRow>();
+       COUNT(CASE WHEN tokens_cache_read > 0 THEN 1 END) AS prompt_cache_hits,
+       COUNT(CASE WHEN ${TOKEN_ROWS_SQL()} THEN 1 END) AS token_requests
+     FROM request_metrics WHERE ${whereSql}`,
+  ).bind(...params);
+  let row: SpendRow | null;
+  let byKind: KindUsage[] = [];
+  if (options.withKinds) {
+    const [summary, kinds] = await env.DB.batch([
+      totals,
+      kindUsageStatement(env, whereSql, params),
+    ]);
+    row = (summary.results[0] as SpendRow | undefined) ?? null;
+    byKind = toKindUsage(kinds.results);
+  } else {
+    row = await totals.first<SpendRow>();
+  }
 
   const requests = row?.requests ?? 0;
   const errors = row?.errors ?? 0;
   const promptCacheHits = row?.prompt_cache_hits ?? 0;
+  // [fork] W17: the hit rate is over token rows only (images/audio never hit).
+  const tokenRequests = row?.token_requests ?? 0;
   return {
     start,
     end,
@@ -178,7 +206,8 @@ export async function spendForRange(
     tokensCacheWrite: row?.tokens_cache_write ?? 0,
     responseCacheHits: row?.response_cache_hits ?? 0,
     promptCacheHits,
-    promptCacheHitRate: requests > 0 ? promptCacheHits / requests : 0,
+    promptCacheHitRate: tokenRequests > 0 ? promptCacheHits / tokenRequests : 0,
+    byKind,
   };
 }
 
@@ -260,6 +289,18 @@ export interface DailyCostRow {
   day: number;
   cost_usd: number;
   requests: number;
+  /** [fork] W17: the day split per request kind. */
+  kinds: DailyKindRow[];
+}
+
+/** [fork] W17 */
+export interface DailyKindRow {
+  kind: string;
+  unit: KindUnit;
+  label: string;
+  requests: number;
+  units: number;
+  costUsd: number;
 }
 
 /** Per-day cost breakout for a tenant (used by GET /usage/costs). */
@@ -270,21 +311,44 @@ export async function dailyCosts(
   end: number,
 ): Promise<DailyCostRow[]> {
   // `timestamp` is stored as unix seconds; bucket each row to UTC midnight
-  // with pure integer math (no date-string round trip).
+  // with pure integer math (no date-string round trip). [fork] W17: grouped
+  // by kind too, folded into days below.
   const { results } = await env.DB.prepare(
-    `SELECT (timestamp / 86400) * 86400 AS day,
-       SUM(cost_usd) AS cost_usd, COUNT(*) AS requests
+    `SELECT (timestamp / 86400) * 86400 AS day, method AS kind,
+       SUM(cost_usd) AS cost_usd, COUNT(*) AS requests, SUM(units) AS units
      FROM request_metrics
      WHERE organization_id = ? AND timestamp >= ? AND timestamp < ?
-     GROUP BY day ORDER BY day ASC`,
+     GROUP BY day, method ORDER BY day ASC, requests DESC, method`,
   )
     .bind(organizationId, start, end)
-    .all<{ day: number; cost_usd: number; requests: number }>();
-  return results.map((r) => ({
-    day: r.day,
-    cost_usd: r.cost_usd ?? 0,
-    requests: r.requests ?? 0,
-  }));
+    .all<{
+      day: number;
+      kind: string;
+      cost_usd: number | null;
+      requests: number;
+      units: number | null;
+    }>();
+  const days = new Map<number, DailyCostRow>();
+  for (const r of results) {
+    let day = days.get(r.day);
+    if (!day) {
+      day = { day: r.day, cost_usd: 0, requests: 0, kinds: [] };
+      days.set(r.day, day);
+    }
+    const costUsd = r.cost_usd ?? 0;
+    day.cost_usd += costUsd;
+    day.requests += r.requests;
+    const { unit, label } = kindInfo(r.kind);
+    day.kinds.push({
+      kind: r.kind,
+      unit,
+      label,
+      requests: r.requests,
+      units: r.units ?? 0,
+      costUsd,
+    });
+  }
+  return [...days.values()];
 }
 
 export interface CacheUsageRow {
@@ -324,6 +388,7 @@ export async function cacheUsageByModel(
        SUM(cache_hit) AS response_cache_hits
      FROM request_metrics
      WHERE organization_id = ? AND timestamp >= ? AND timestamp < ?
+       AND ${TOKEN_ROWS_SQL()}
      GROUP BY provider, model
      ORDER BY requests DESC`,
   )

@@ -1,3 +1,5 @@
+import { kindInfo, type KindUnit } from "./request-kinds";
+
 /** Status filter for the request log. */
 export const REQUEST_STATUSES = [
   "success",
@@ -28,6 +30,8 @@ export interface RequestFilters {
   apiKeyId?: string;
   status?: RequestStatusFilter;
   cache?: RequestCacheFilter;
+  /** [fork] W17: request kind (`request_metrics.method`). */
+  kind?: string;
 }
 
 /** One request_metrics row as the dashboard reads it. */
@@ -50,6 +54,11 @@ export interface RequestLogRow {
   cache_hit: number;
   ttft_ms: number | null;
   decode_ms: number | null;
+  /** [fork] W17: image count for image rows, null otherwise. */
+  units: number | null;
+  /** [fork] W17: unit and label of `method`, attached after the query. */
+  kind_unit: KindUnit;
+  kind_label: string;
 }
 
 /** A request row plus the key and user it belongs to. */
@@ -64,17 +73,32 @@ export interface RequestDetail extends RequestLogRow {
   user_email: string | null;
 }
 
-/** Request count per provider + model, for filter dropdowns. */
+/** Request count per provider + model + kind, for filter dropdowns. */
 export interface RequestFacet {
   provider: string;
   model: string;
+  /** [fork] W17 */
+  kind: string;
+  /** [fork] W17: unit and label of `kind`. */
+  unit: KindUnit;
+  label: string;
   requests: number;
 }
+
+/** [fork] W17: a raw row with its kind's unit and label (no extra query). */
+export function withKindInfo<T extends { method: string }>(
+  row: T,
+): T & { kind_unit: KindUnit; kind_label: string } {
+  const info = kindInfo(row.method);
+  return { ...row, kind_unit: info.unit, kind_label: info.label };
+}
+
+type RawRow = Omit<RequestLogRow, "kind_unit" | "kind_label">;
 
 const ROW_COLUMNS = `m.id, m.api_key_id, m.timestamp, m.provider, m.model, m.method,
   m.status_code, m.latency_ms, m.tokens_input, m.tokens_output, m.tokens_cached,
   m.tokens_cache_read, m.tokens_cache_write, m.cost_usd, m.error_message,
-  m.cache_hit, m.ttft_ms, m.decode_ms`;
+  m.cache_hit, m.ttft_ms, m.decode_ms, m.units`;
 
 const STATUS_SQL: Record<RequestStatusFilter, string> = {
   success: "m.status_code < 400",
@@ -118,6 +142,7 @@ export function parseRequestFilters(
     cache,
     apiKeyId: query("apiKeyId") || undefined,
     model: query("model") || undefined,
+    kind: query("kind") || undefined,
   };
 }
 
@@ -149,6 +174,10 @@ function whereClause(
     where.push("m.api_key_id = ?");
     params.push(filters.apiKeyId);
   }
+  if (filters.kind) {
+    where.push("m.method = ?");
+    params.push(filters.kind);
+  }
   if (filters.status) where.push(STATUS_SQL[filters.status]);
   if (filters.cache) where.push(CACHE_SQL[filters.cache]);
   return { sql: where.join(" AND "), params };
@@ -176,7 +205,7 @@ export async function listRequests(
     ).bind(...params, limit, offset),
   ]);
   return {
-    requests: page.results as unknown as RequestLogRow[],
+    requests: (page.results as unknown as RawRow[]).map(withKindInfo),
     total: (count.results[0] as { total: number }).total,
   };
 }
@@ -202,7 +231,7 @@ export async function getRequest(
   organizationId: string,
   id: string,
 ): Promise<RequestDetail | null> {
-  return env.DB.prepare(
+  const row = await env.DB.prepare(
     `SELECT ${ROW_COLUMNS}, m.user_id,
             k.name AS key_name, k.key_prefix, k.status AS key_status,
             u.name AS user_name, u.email AS user_email
@@ -213,10 +242,11 @@ export async function getRequest(
      WHERE m.organization_id = ? AND m.id = ?`,
   )
     .bind(organizationId, id)
-    .first<RequestDetail>();
+    .first<Omit<RequestDetail, "kind_unit" | "kind_label">>();
+  return row ? withKindInfo(row) : null;
 }
 
-/** Providers and models seen in [start, end), busiest first. */
+/** Providers, models and kinds seen in [start, end), busiest first. */
 export async function requestFacets(
   env: Env,
   organizationId: string,
@@ -224,13 +254,16 @@ export async function requestFacets(
   end: number,
 ): Promise<RequestFacet[]> {
   const { results } = await env.DB.prepare(
-    `SELECT provider, model, COUNT(*) AS requests
+    `SELECT provider, model, method AS kind, COUNT(*) AS requests
      FROM request_metrics
      WHERE organization_id = ? AND timestamp >= ? AND timestamp < ?
-     GROUP BY provider, model
-     ORDER BY requests DESC, provider, model`,
+     GROUP BY provider, model, method
+     ORDER BY requests DESC, provider, model, method`,
   )
     .bind(organizationId, start, end)
-    .all<RequestFacet>();
-  return results;
+    .all<{ provider: string; model: string; kind: string; requests: number }>();
+  return results.map((f) => {
+    const info = kindInfo(f.kind);
+    return { ...f, unit: info.unit, label: info.label };
+  });
 }

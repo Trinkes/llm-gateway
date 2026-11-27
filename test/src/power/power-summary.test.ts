@@ -2,6 +2,7 @@
 // [fork] W14: wall-meter time priced as measured, APU-only time via the fallback model.
 import { describe, expect, it } from "vitest";
 import type { FallbackModel } from "~/src/power/fallback-model";
+import type { KindBusy } from "~/src/power/kind-energy";
 import type { IdleStats } from "~/src/power/power-query";
 import type { PowerSettings } from "~/src/power/power-settings";
 import {
@@ -43,6 +44,14 @@ const noTokens = {
   cacheWrite: 0,
   requests: 0,
 };
+const chatBusy: KindBusy = {
+  kind: "chat",
+  requests: 5,
+  units: 0,
+  output: 1_000_000,
+  input: 3_000_000,
+  busySeconds: 100,
+};
 const noWall = { wallWs: 0, wallS: 0, wallPeakW: null };
 const noApu = { apuWs: 0, apuS: 0, apuPeakW: null };
 // 1 h range, 30 min measured at 20 W APU, no wall readings
@@ -58,18 +67,14 @@ const raw: PeriodRaw[] = [
     // 3M in at $1, 1M out at $4, 1M cache read at $0.1 (priced in SQL)
     cloudUsd: 7.1,
     unpricedRequests: 0,
+    // [fork] W17: chat only, so it carries all the energy.
+    kinds: [chatBusy],
   },
 ];
 
 describe("summarize", () => {
   it("full maths", () => {
-    const { totals, periods } = summarize(
-      raw,
-      0,
-      10_000,
-      settings,
-      overhead10,
-    );
+    const { totals, periods } = summarize(raw, 0, 10_000, settings, overhead10);
     expect(totals.coverage).toBe(0.5);
     expect(totals.avgW).toBe(30);
     expect(totals.wallKwh).toBe(0);
@@ -175,6 +180,7 @@ describe("summarize", () => {
         tokens: noTokens,
         cloudUsd: 0,
         unpricedRequests: 0,
+        kinds: [],
       },
       {
         start: 100,
@@ -186,6 +192,7 @@ describe("summarize", () => {
         tokens: noTokens,
         cloudUsd: 0,
         unpricedRequests: 0,
+        kinds: [],
       },
     ];
     const { totals, periods } = summarize(two, 0, 10_000, {}, none);
@@ -241,13 +248,7 @@ describe("summarize", () => {
         unpricedRequests: tokens.requests,
       },
     ];
-    const { totals, periods } = summarize(
-      two,
-      0,
-      10_000,
-      settings,
-      overhead10,
-    );
+    const { totals, periods } = summarize(two, 0, 10_000, settings, overhead10);
     expect(totals.cloudUsd).toBeCloseTo(7.1);
     expect(totals.unpricedRequests).toBe(tokens.requests);
     expect(periods[1].cloudUsd).toBeNull();
@@ -273,7 +274,14 @@ describe("summarize", () => {
 
   it("no output tokens gives no per-1M figures", () => {
     const { totals } = summarize(
-      [{ ...raw[0], tokens: noTokens, cloudUsd: 0 }],
+      [
+        {
+          ...raw[0],
+          tokens: noTokens,
+          cloudUsd: 0,
+          kinds: [{ ...chatBusy, output: 0 }],
+        },
+      ],
       0,
       10_000,
       settings,
@@ -310,6 +318,354 @@ describe("summarize", () => {
     expect(
       summarize(raw, null, 10_000, settings, overhead10).totals.coverage,
     ).toBeNull();
+  });
+});
+
+// [fork] W17: measured energy split by each kind's busy time.
+describe("summarize kinds", () => {
+  const imageBusy: KindBusy = {
+    kind: "image",
+    requests: 3,
+    units: 6,
+    output: 0,
+    input: 0,
+    busySeconds: 30,
+  };
+  const audioBusy: KindBusy = {
+    kind: "audio",
+    requests: 2,
+    units: 0,
+    output: 0,
+    input: 0,
+    busySeconds: 20,
+  };
+  // raw[0]: 0.03 kWh, $0.006 at 0.2 $/kWh
+  const mixed: PeriodRaw[] = [
+    {
+      ...raw[0],
+      kinds: [audioBusy, imageBusy, { ...chatBusy, busySeconds: 50 }],
+    },
+  ];
+
+  it("splits energy by busy share across chat, image and an unknown kind", () => {
+    const { totals, periods } = summarize(
+      mixed,
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    const k = periods[0].kinds;
+    expect(k.map((x) => x.kind)).toEqual(["chat", "image", "audio"]);
+    expect(k.map((x) => x.unit)).toEqual(["tokens", "images", null]);
+    expect(k.map((x) => x.label)).toEqual(["Chat", "Image", "audio"]);
+    expect(k.reduce((a, x) => a + x.share, 0)).toBeCloseTo(1);
+    expect(k.map((x) => x.share)).toEqual([0.5, 0.3, 0.2]);
+    expect(k[0].kwh).toBeCloseTo(0.015);
+    expect(k[0].electricityUsd).toBeCloseTo(0.003);
+    expect(k[0].perUnitUsd).toBeCloseTo(0.003); // per 1M output tokens
+    expect(k[1].perUnitUsd).toBeCloseTo(0.0018 / 6); // per image
+    expect(k[2].perUnitUsd).toBeCloseTo(0.0012 / 2); // per request
+    expect(k[1]).toMatchObject({ requests: 3, units: 6, busySeconds: 30 });
+    expect(k.map((x) => [x.tokensInput, x.tokensOutput])).toEqual([
+      [3_000_000, 1_000_000],
+      [0, 0],
+      [0, 0],
+    ]);
+    // chat's per-1M uses only chat's share
+    expect(periods[0].electricityPer1mOutputUsd).toBeCloseTo(0.003);
+    expect(totals.electricityPer1mOutputUsd).toBeCloseTo(0.003);
+    expect(totals.kinds).toEqual(k);
+  });
+
+  it("per-1M output counts only token kinds' output, numerator and denominator alike", () => {
+    // audio (not a token kind) also reports output tokens in the raw sums
+    const withAudioOutput: PeriodRaw[] = [
+      {
+        ...mixed[0],
+        tokens: { ...mixed[0].tokens, output: 1_500_000 },
+        kinds: [
+          { ...audioBusy, output: 500_000 },
+          imageBusy,
+          { ...chatBusy, busySeconds: 50 },
+        ],
+      },
+    ];
+    const { totals } = summarize(
+      withAudioOutput,
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    // chat's $0.003 over chat's 1M output, not over 1.5M
+    expect(totals.electricityPer1mOutputUsd).toBeCloseTo(0.003);
+  });
+
+  it("a chat-only period keeps the whole-energy per-1M figure", () => {
+    const { totals } = summarize(raw, 0, 10_000, settings, overhead10);
+    expect(totals.kinds).toHaveLength(1);
+    expect(totals.kinds[0].share).toBe(1);
+    expect(totals.electricityPer1mOutputUsd).toBeCloseTo(
+      totals.electricityUsd!,
+    );
+  });
+
+  it("an image-only period has no token per-1M but a per-image figure", () => {
+    const { totals } = summarize(
+      [{ ...raw[0], tokens: noTokens, cloudUsd: 0, kinds: [imageBusy] }],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    expect(totals.electricityPer1mOutputUsd).toBeNull();
+    expect(totals.kinds[0].perUnitUsd).toBeCloseTo(0.006 / 6);
+  });
+
+  it("an idle period attributes nothing", () => {
+    const zero = { ...chatBusy, busySeconds: 0 };
+    for (const kinds of [[], [zero]]) {
+      const { totals } = summarize(
+        [{ ...raw[0], kinds }],
+        0,
+        10_000,
+        settings,
+        overhead10,
+      );
+      expect(totals.kinds).toEqual([]);
+      expect(totals.electricityPer1mOutputUsd).toBeNull();
+    }
+  });
+
+  it("range totals split all range energy by the range's busy time", () => {
+    const two: PeriodRaw[] = [
+      { ...raw[0], end: 1800, kinds: [{ ...chatBusy, busySeconds: 10 }] },
+      {
+        ...raw[0],
+        start: 1800,
+        tokens: noTokens,
+        kinds: [
+          imageBusy,
+          { ...chatBusy, output: 0, input: 0, busySeconds: 30 },
+        ],
+      },
+    ];
+    const { totals, periods } = summarize(two, 0, 10_000, settings, overhead10);
+    const [chat, image] = totals.kinds;
+    expect(chat.kind).toBe("chat");
+    expect(chat.busySeconds).toBe(40);
+    expect(chat.requests).toBe(10);
+    // token counts add up across the range
+    expect([chat.tokensInput, chat.tokensOutput]).toEqual([
+      3_000_000, 1_000_000,
+    ]);
+    expect(chat.share).toBeCloseTo(40 / 70);
+    expect(image.share).toBeCloseTo(30 / 70);
+    // shares and kWh agree, and the kinds carry all of the range's energy
+    expect(chat.kwh).toBeCloseTo((totals.totalKwh * 40) / 70);
+    expect(chat.kwh + image.kwh).toBeCloseTo(totals.totalKwh);
+    expect(chat.electricityUsd! + image.electricityUsd!).toBeCloseTo(
+      totals.electricityUsd!,
+    );
+    expect(chat.perUnitUsd).toBeCloseTo(chat.electricityUsd!); // 1M output
+    expect(totals.electricityPer1mOutputUsd).toBeCloseTo(chat.electricityUsd!);
+    // the second period has chat busy time but no output tokens
+    expect(periods[1].kinds.find((x) => x.kind === "chat")?.perUnitUsd).toBe(
+      null,
+    );
+    expect(periods[1].electricityPer1mOutputUsd).toBeNull();
+  });
+
+  it("a chat-only range with an idle day keeps the old per-1M figure", () => {
+    const days: PeriodRaw[] = [
+      { ...raw[0], end: 1800 },
+      { ...raw[0], start: 1800, tokens: noTokens, cloudUsd: 0, kinds: [] },
+    ];
+    const { totals, periods } = summarize(
+      days,
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    expect(periods[1].kinds).toEqual([]);
+    expect(periods[1].totalKwh).toBeGreaterThan(0);
+    expect(totals.kinds).toHaveLength(1);
+    expect(totals.kinds[0].kwh).toBeCloseTo(totals.totalKwh);
+    expect(totals.electricityPer1mOutputUsd).toBeCloseTo(
+      (totals.electricityUsd! / tokens.output) * 1e6,
+    );
+  });
+
+  it("day periods summed match one month period", () => {
+    const days: PeriodRaw[] = [
+      { ...raw[0], end: 1800, kinds: [{ ...chatBusy, busySeconds: 10 }] },
+      { ...raw[0], start: 1800, tokens: noTokens, kinds: [imageBusy] },
+    ];
+    const month: PeriodRaw[] = [
+      {
+        ...raw[0],
+        apuWs: 2 * raw[0].apuWs,
+        apuS: 2 * raw[0].apuS,
+        tokens,
+        cloudUsd: 2 * raw[0].cloudUsd,
+        kinds: [imageBusy, { ...chatBusy, busySeconds: 10 }],
+      },
+    ];
+    const a = summarize(days, 0, 10_000, settings, overhead10).totals;
+    const b = summarize(month, 0, 10_000, settings, overhead10).totals;
+    expect(a.totalKwh).toBeCloseTo(b.totalKwh);
+    expect(a.kinds.map((k) => k.kind)).toEqual(b.kinds.map((k) => k.kind));
+    a.kinds.forEach((k, i) => {
+      expect(k.kwh).toBeCloseTo(b.kinds[i].kwh);
+      expect(k.share).toBeCloseTo(b.kinds[i].share);
+      expect(k.perUnitUsd!).toBeCloseTo(b.kinds[i].perUnitUsd!);
+    });
+    expect(a.electricityPer1mOutputUsd!).toBeCloseTo(
+      b.electricityPer1mOutputUsd!,
+    );
+  });
+
+  it("embedding energy is per 1M input and stays out of chat's per-1M output", () => {
+    const embedding: KindBusy = {
+      kind: "embedding",
+      requests: 4,
+      units: 0,
+      output: 0,
+      input: 2_000_000,
+      busySeconds: 10,
+    };
+    // busy 40 chat, 30 image, 20 audio, 10 embedding of 100 s; $0.006
+    const { totals } = summarize(
+      [
+        {
+          ...raw[0],
+          kinds: [
+            { ...chatBusy, busySeconds: 40 },
+            imageBusy,
+            audioBusy,
+            embedding,
+          ],
+        },
+      ],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    const by = Object.fromEntries(totals.kinds.map((k) => [k.kind, k]));
+    expect(totals.kinds.map((k) => k.kind)).toEqual([
+      "chat",
+      "image",
+      "audio",
+      "embedding",
+    ]);
+    expect(totals.kinds.reduce((a, k) => a + k.share, 0)).toBeCloseTo(1);
+    expect(by.embedding.unit).toBe("tokens");
+    expect(by.embedding.perUnitUsd).toBeCloseTo((0.0006 / 2_000_000) * 1e6);
+    expect(by.chat.perUnitUsd).toBeCloseTo(0.0024); // per 1M output
+    // only chat (output > 0) feeds the per-1M output figure
+    expect(totals.electricityPer1mOutputUsd).toBeCloseTo(0.0024);
+  });
+
+  it("a token kind without input or output has no per-unit figure", () => {
+    const { totals } = summarize(
+      [
+        {
+          ...raw[0],
+          tokens: noTokens,
+          kinds: [{ ...chatBusy, output: 0, input: 0 }],
+        },
+      ],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    expect(totals.kinds[0].perUnitUsd).toBeNull();
+    expect(totals.electricityPer1mOutputUsd).toBeNull();
+  });
+
+  it("names the pricing basis of each per-unit figure", () => {
+    const embedding: KindBusy = {
+      ...chatBusy,
+      kind: "embedding",
+      output: 0,
+      busySeconds: 10,
+    };
+    const kinds = [chatBusy, embedding, imageBusy, audioBusy];
+    const { totals, periods } = summarize(
+      [{ ...raw[0], kinds }],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    for (const k of [totals.kinds, periods[0].kinds]) {
+      expect(Object.fromEntries(k.map((x) => [x.kind, x.perUnit]))).toEqual({
+        chat: "1M output tokens",
+        embedding: "1M input tokens",
+        image: "image",
+        audio: "request",
+      });
+    }
+    const unpriced = summarize([{ ...raw[0], kinds }], 0, 10_000, {}, none);
+    expect(unpriced.totals.kinds.every((x) => x.perUnit === null)).toBe(true);
+    const empty = summarize(
+      [{ ...raw[0], kinds: [{ ...imageBusy, units: 0 }] }],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    expect(empty.totals.kinds[0].perUnit).toBeNull();
+  });
+
+  it("orders equal busy time by kind", () => {
+    const { totals } = summarize(
+      [{ ...raw[0], kinds: [imageBusy, { ...audioBusy, busySeconds: 30 }] }],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    expect(totals.kinds.map((x) => x.kind)).toEqual(["audio", "image"]);
+  });
+
+  it("no kWh price leaves kind money null", () => {
+    const { totals } = summarize(mixed, 0, 10_000, {}, none);
+    expect(totals.kinds.every((x) => x.kwh > 0)).toBe(true);
+    expect(totals.kinds.map((x) => x.electricityUsd)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(totals.kinds.map((x) => x.perUnitUsd)).toEqual([null, null, null]);
+  });
+
+  it("zero units or requests give no per-unit figure", () => {
+    const { totals } = summarize(
+      [
+        {
+          ...raw[0],
+          kinds: [
+            { ...imageBusy, units: 0 },
+            { ...audioBusy, requests: 0 },
+          ],
+        },
+      ],
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    expect(totals.kinds.map((x) => x.perUnitUsd)).toEqual([null, null]);
+  });
+
+  it("a period before data start has no kinds", () => {
+    const { periods } = summarize(mixed, 5000, 10_000, settings, overhead10);
+    expect(periods[0].kinds).toEqual([]);
   });
 });
 

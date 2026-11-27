@@ -20,7 +20,7 @@ describe("parseExplorerState", () => {
   it("reads every field", () => {
     const state = parseExplorerState(
       new URLSearchParams(
-        "range=7d&provider=openai&model=gpt&apiKeyId=none&status=error&cache=none&page=3&size=100&request=r1",
+        "range=7d&provider=openai&model=gpt&apiKeyId=none&status=error&cache=none&kind=image&page=3&size=100&request=r1",
       ),
     );
     expect(state).toEqual({
@@ -31,6 +31,7 @@ describe("parseExplorerState", () => {
         apiKeyId: "none",
         status: "error",
         cache: "none",
+        kind: "image",
       },
       page: 3,
       pageSize: 100,
@@ -61,6 +62,16 @@ describe("explorerParams", () => {
       "range=1h&provider=openai&status=success&page=2&size=25&request=abc";
     const state = parseExplorerState(new URLSearchParams(url));
     expect(parseExplorerState(explorerParams(state))).toEqual(state);
+  });
+});
+
+describe("kind filter", () => {
+  it("round-trips through the URL and the API query", () => {
+    const state = parseExplorerState(new URLSearchParams("kind=audio"));
+    expect(state.filters).toEqual({ kind: "audio" });
+    expect(explorerParams(state).toString()).toBe("kind=audio");
+    const q = new URLSearchParams(requestsQuery(state, { start: 1, end: 2 }));
+    expect(q.get("kind")).toBe("audio");
   });
 });
 

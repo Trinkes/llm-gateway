@@ -1,3 +1,5 @@
+import type { KindInfo, KindUnit, KindUsage } from "./requestKinds";
+
 export interface ApiKeyView {
   id: string;
   name: string;
@@ -110,6 +112,10 @@ export interface AlertsView {
 
 export interface LatencyStat {
   provider: string;
+  /** [fork] W17: kind with its unit and label. */
+  kind: string;
+  unit: KindUnit;
+  label: string;
   requests: number;
   p50: number;
   p95: number;
@@ -168,6 +174,14 @@ export interface KeyUsage {
   latencyAvgMs: number;
   /** Unix seconds of the newest request in the window. */
   lastRequestAt: number;
+  /** [fork] W17: requests per kind. */
+  kinds: KeyKindUsage[];
+}
+
+/** [fork] W17: one kind's traffic for a key. */
+export interface KeyKindUsage extends KindInfo {
+  requests: number;
+  units: number;
 }
 
 export interface RequestRow {
@@ -190,6 +204,11 @@ export interface RequestRow {
   /** Streamed requests only: time to first output, then decode duration. */
   ttft_ms?: number | null;
   decode_ms?: number | null;
+  /** [fork] W17: count of the kind's own unit (images); null for token kinds. */
+  units?: number | null;
+  /** [fork] W17: unit and label of `method`, attached by the API. */
+  kind_unit: KindUnit;
+  kind_label: string;
 }
 
 // [fork] W11: GET /api/live snapshot (mirrors src/live/snapshot.ts).
@@ -336,6 +355,10 @@ export interface RequestDetail extends RequestRow {
 export interface RequestFacet {
   provider: string;
   model: string;
+  /** [fork] W17 */
+  kind: string;
+  unit: KindUnit;
+  label: string;
   requests: number;
 }
 
@@ -354,6 +377,8 @@ export interface KeySeriesPoint {
   requests: number;
   errors: number;
   costUsd: number;
+  /** [fork] W17: requests per kind in the bucket. */
+  kinds: Record<string, number>;
 }
 
 /** Requests and cost per provider + model for one key. */
@@ -363,6 +388,10 @@ export interface KeyModelUsage {
   requests: number;
   errors: number;
   costUsd: number;
+  /** [fork] W17 */
+  kind: string;
+  unit: KindUnit;
+  label: string;
 }
 
 /** One key's usage over a window (GET /api/metrics/keys/:id). */
@@ -379,6 +408,8 @@ export interface KeyDetailUsage {
     costUsd: number;
     latencyAvgMs: number | null;
     lastRequestAt: number | null;
+    /** [fork] W17 */
+    byKind: KindUsage[];
   };
   series: KeySeriesPoint[];
   models: KeyModelUsage[];

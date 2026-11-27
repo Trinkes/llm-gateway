@@ -32,6 +32,7 @@ import {
   requestsQuery,
   STATUS_OPTIONS,
 } from "../lib/requestExplorer";
+import { formatRowUsage, kindOptions } from "../lib/requestKinds";
 import {
   ALL_RANGES,
   RANGE_PRESETS,
@@ -97,16 +98,20 @@ export function RequestsPage() {
       label: p,
     })),
   );
+  // [fork] W17: facets are per provider + model + kind: sum a model's kinds into one option.
+  const modelRequests = new Map<string, number>();
+  for (const f of facetRows) {
+    if (state.filters.provider && f.provider !== state.filters.provider)
+      continue;
+    if (state.filters.kind && f.kind !== state.filters.kind) continue;
+    modelRequests.set(f.model, (modelRequests.get(f.model) ?? 0) + f.requests);
+  }
   const modelOptions = withAll(
     "All models",
-    facetRows
-      .filter(
-        (f) => !state.filters.provider || f.provider === state.filters.provider,
-      )
-      .map((f) => ({
-        value: f.model,
-        label: `${f.model} (${fmtCount(f.requests)})`,
-      })),
+    [...modelRequests].map(([model, requests]) => ({
+      value: model,
+      label: `${model} (${fmtCount(requests)})`,
+    })),
   );
   const keyNames = new Map(
     (keys.data?.keys ?? []).map((k) => [k.id, k.name] as const),
@@ -150,7 +155,7 @@ export function RequestsPage() {
       </div>
 
       <Card>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
           <div>
             <Label>Time range</Label>
             <Select
@@ -180,6 +185,15 @@ export function RequestsPage() {
               value={state.filters.model ?? ALL}
               onChange={(v) => setFilter("model", v as string)}
               options={modelOptions}
+            />
+          </div>
+          {/* [fork] W17 */}
+          <div>
+            <Label>Kind</Label>
+            <Select
+              value={state.filters.kind ?? ALL}
+              onChange={(v) => setFilter("kind", v as string)}
+              options={withAll("All kinds", kindOptions(facetRows))}
             />
           </div>
           <div>
@@ -246,14 +260,14 @@ export function RequestsPage() {
                   <th className="px-5 py-3 font-medium">Caller</th>
                   <th className="px-5 py-3 font-medium">Provider</th>
                   <th className="px-5 py-3 font-medium">Model</th>
+                  {/* [fork] W17 */}
+                  <th className="px-5 py-3 font-medium">Kind</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium">Cache</th>
                   <th className="px-5 py-3 font-medium">Latency</th>
                   <th className="px-5 py-3 font-medium">TTFT</th>
                   <th className="px-5 py-3 text-right font-medium">Tok/s</th>
-                  <th className="px-5 py-3 text-right font-medium">
-                    Tokens (in/out)
-                  </th>
+                  <th className="px-5 py-3 text-right font-medium">Usage</th>
                   <th className="px-5 py-3 text-right font-medium">Cost</th>
                 </tr>
               </thead>
@@ -291,6 +305,10 @@ export function RequestsPage() {
                       <td className="px-5 py-3 text-gray-600">
                         {r.model || "—"}
                       </td>
+                      {/* [fork] W17 */}
+                      <td className="px-5 py-3 text-gray-600">
+                        {r.kind_label}
+                      </td>
                       <td className="px-5 py-3">
                         <div className="flex flex-col items-start gap-1">
                           <RequestStatusBadge
@@ -313,7 +331,7 @@ export function RequestsPage() {
                         {fmtTps(rowDecodeTps(r.tokens_output, r.decode_ms))}
                       </td>
                       <td className="px-5 py-3 text-right text-gray-600">
-                        {r.tokens_input ?? 0} / {r.tokens_output ?? 0}
+                        {formatRowUsage(r)}
                       </td>
                       <td className="px-5 py-3 text-right text-gray-700">
                         {fmtUsdPrecise(r.cost_usd)}

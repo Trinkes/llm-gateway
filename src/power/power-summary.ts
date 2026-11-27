@@ -3,6 +3,15 @@
 // through the fallback model (which carries the overhead setting when there is
 // no plug data), never on top of a wall reading.
 import { modelWatts, type FallbackModel } from "./fallback-model";
+import {
+  addKindBusy,
+  attributeEnergy,
+  kindEnergy,
+  outputKindsTokens,
+  outputKindsUsd,
+  type KindBusy,
+  type KindEnergy,
+} from "./kind-energy";
 import type { Period } from "./periods";
 import type { IdleStats } from "./power-query";
 import type { PowerSettings } from "./power-settings";
@@ -33,6 +42,8 @@ export interface PeriodRaw extends Period {
   cloudUsd: number;
   /** Requests whose provider/model has no `model_pricing` row. */
   unpricedRequests: number;
+  /** [fork] W17: each request kind's busy time, for the energy split. */
+  kinds: KindBusy[];
 }
 
 export interface PowerTotals {
@@ -62,8 +73,11 @@ export interface PowerTotals {
   /** Requests left out of `cloudUsd` because they have no rate. */
   unpricedRequests: number;
   savingsUsd: number | null;
+  /** [fork] W17: output-producing token kinds' electricity per 1M output tokens. */
   electricityPer1mOutputUsd: number | null;
   cloudPer1mOutputUsd: number | null;
+  /** [fork] W17: the energy split by each kind's busy time. */
+  kinds: KindEnergy[];
 }
 
 export type PeriodTotals = PowerTotals & Period;
@@ -111,6 +125,8 @@ interface Sums {
   peakW: number | null;
   tokens: TokenSums;
   cloud: { usd: number; unpriced: number };
+  /** [fork] W17: per-kind busy time, the weights of the energy split. */
+  kinds: KindBusy[];
 }
 
 function sourceOf(wallS: number, measuredS: number): PowerTotals["source"] {
@@ -146,6 +162,7 @@ function totalsOf(
       savingsUsd: null,
       electricityPer1mOutputUsd: null,
       cloudPer1mOutputUsd: null,
+      kinds: [],
     };
   }
   const measuredS = x.wallS + x.apuS;
@@ -158,6 +175,9 @@ function totalsOf(
   const electricityUsd =
     s.pricePerKwhUsd === undefined ? null : totalKwh * s.pricePerKwhUsd;
   const cloudUsd = cloudOrNull(x.cloud.usd, x.tokens, x.cloud.unpriced);
+  // [fork] W17: all of the energy is split by these sums' own busy time, so
+  // a range's kinds add up to its total (not the sum of per-period splits).
+  const shares = attributeEnergy(x.kinds, totalKwh, electricityUsd);
   return {
     effectiveS: x.effectiveS,
     measuredS,
@@ -179,8 +199,12 @@ function totalsOf(
       cloudUsd === null || electricityUsd === null
         ? null
         : cloudUsd - electricityUsd,
-    electricityPer1mOutputUsd: per1mOutput(electricityUsd, x.tokens.output),
+    electricityPer1mOutputUsd: per1mOutput(
+      outputKindsUsd(shares),
+      outputKindsTokens(shares),
+    ),
     cloudPer1mOutputUsd: per1mOutput(cloudUsd, x.tokens.output),
+    kinds: kindEnergy(shares),
   };
 }
 
@@ -206,6 +230,7 @@ function periodSums(
     ),
     tokens: p.tokens,
     cloud: { usd: p.cloudUsd, unpriced: p.unpricedRequests },
+    kinds: p.kinds,
   };
 }
 
@@ -222,6 +247,7 @@ function addSums(a: Sums, b: Sums): Sums {
       usd: a.cloud.usd + b.cloud.usd,
       unpriced: a.cloud.unpriced + b.cloud.unpriced,
     },
+    kinds: addKindBusy(a.kinds, b.kinds),
   };
 }
 
@@ -234,6 +260,7 @@ const EMPTY_SUMS: Sums = {
   peakW: null,
   tokens: { ...EMPTY_TOKENS },
   cloud: { usd: 0, unpriced: 0 },
+  kinds: [],
 };
 
 /**

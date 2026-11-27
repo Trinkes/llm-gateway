@@ -34,6 +34,8 @@ interface SeedRow {
   statusCode?: number;
   costUsd?: number | null;
   tokensInput?: number | null;
+  kind?: string;
+  units?: number | null;
 }
 
 async function seed(rows: SeedRow[]) {
@@ -43,8 +45,8 @@ async function seed(rows: SeedRow[]) {
         `INSERT INTO request_metrics
            (id, organization_id, api_key_id, timestamp, provider, model, method,
             status_code, latency_ms, tokens_input, tokens_output, tokens_cache_read,
-            cost_usd, cache_hit)
-         VALUES (?, ?, ?, ?, ?, ?, 'chat', ?, 100, ?, 5, 2, ?, 0)`,
+            cost_usd, cache_hit, units)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, ?, 5, 2, ?, 0, ?)`,
       ).bind(
         `m_${Math.random().toString(36).slice(2)}`,
         r.organizationId ?? ORG,
@@ -52,9 +54,11 @@ async function seed(rows: SeedRow[]) {
         r.timestamp,
         r.provider ?? "local-m5",
         r.model ?? "qwen",
+        r.kind ?? "chat",
         r.statusCode ?? 200,
-        r.tokensInput ?? 10,
+        r.tokensInput === undefined ? 10 : r.tokensInput,
         r.costUsd === undefined ? 0.01 : r.costUsd,
+        r.units ?? null,
       ),
     ),
   );
@@ -72,7 +76,7 @@ function app() {
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
 });
 
@@ -115,13 +119,28 @@ describe("keyDetailUsage", () => {
     });
     expect(usage.summary.costUsd).toBeCloseTo(0.04);
     expect(usage.series).toEqual([
-      { t: BASE, requests: 2, errors: 1, costUsd: expect.closeTo(0.03) },
-      { t: BASE + 3600, requests: 1, errors: 0, costUsd: 0.01 },
+      {
+        t: BASE,
+        requests: 2,
+        errors: 1,
+        costUsd: expect.closeTo(0.03),
+        kinds: { chat: 2 },
+      },
+      {
+        t: BASE + 3600,
+        requests: 1,
+        errors: 0,
+        costUsd: 0.01,
+        kinds: { chat: 1 },
+      },
     ]);
     expect(usage.models).toEqual([
       {
         provider: "local-m5",
         model: "qwen",
+        kind: "chat",
+        unit: "tokens",
+        label: "Chat",
         requests: 2,
         errors: 1,
         costUsd: expect.closeTo(0.03),
@@ -129,12 +148,77 @@ describe("keyDetailUsage", () => {
       {
         provider: "openai",
         model: "gpt",
+        kind: "chat",
+        unit: "tokens",
+        label: "Chat",
         requests: 1,
         errors: 0,
         costUsd: 0.01,
       },
     ]);
     expect(usage.lifetimeCostUsd).toBeCloseTo(1.04);
+  });
+
+  it("splits summary, series and models per kind", async () => {
+    await seed([
+      { timestamp: BASE + 60 },
+      {
+        timestamp: BASE + 70,
+        kind: "image",
+        tokensInput: null,
+        units: 3,
+        costUsd: 0.1,
+      },
+      {
+        timestamp: BASE + 80,
+        kind: "image",
+        tokensInput: null,
+        units: 1,
+        costUsd: 0.1,
+      },
+      {
+        timestamp: BASE + 3600,
+        kind: "audio",
+        tokensInput: null,
+        costUsd: null,
+      },
+    ]);
+    const usage = await keyDetailUsage(env, ORG, "key_a", BASE, BASE + DAY);
+
+    expect(usage.summary.byKind).toEqual([
+      expect.objectContaining({
+        kind: "image",
+        unit: "images",
+        label: "Image",
+        requests: 2,
+        units: 4,
+        tokensInput: 0,
+        busySeconds: 0.2,
+      }),
+      expect.objectContaining({
+        kind: "audio",
+        unit: null,
+        label: "audio",
+        units: 0,
+      }),
+      expect.objectContaining({
+        kind: "chat",
+        unit: "tokens",
+        requests: 1,
+        tokensInput: 10,
+      }),
+    ]);
+    expect(usage.series.map((p) => [p.t, p.requests, p.kinds])).toEqual([
+      [BASE, 3, { chat: 1, image: 2 }],
+      [BASE + 3600, 1, { audio: 1 }],
+    ]);
+    expect(
+      usage.models.map((m) => [m.kind, m.requests, m.unit, m.label]),
+    ).toEqual([
+      ["image", 2, "images", "Image"],
+      ["audio", 1, null, "audio"],
+      ["chat", 1, "tokens", "Chat"],
+    ]);
   });
 
   it("buckets long windows by day", async () => {
@@ -164,6 +248,7 @@ describe("keyDetailUsage", () => {
       costUsd: 0,
       latencyAvgMs: null,
       lastRequestAt: null,
+      byKind: [],
     });
     expect(usage.series).toEqual([]);
     expect(usage.models).toEqual([]);

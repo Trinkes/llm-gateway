@@ -39,7 +39,7 @@ async function stub() {
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
 });
 
@@ -131,6 +131,51 @@ describe("MetricsBuffer DO", () => {
       decode_ms: 1_850,
       tokens_cache_read: 2500,
     });
+  });
+
+  it("persists units through the buffer to D1", async () => {
+    const s = await stub();
+    await s.fetch("http://internal/push", {
+      method: "POST",
+      body: JSON.stringify({
+        entries: [
+          metric({ method: "image", units: 3, tokens_input: null }),
+          metric({ method: "audio" }),
+        ],
+      }),
+    });
+    await s.fetch("http://internal/flush");
+    const { results } = await env.DB.prepare(
+      `SELECT method, units FROM request_metrics WHERE organization_id = ? ORDER BY method`,
+    )
+      .bind(ORG)
+      .all();
+    expect(results).toEqual([
+      { method: "audio", units: null },
+      { method: "image", units: 3 },
+    ]);
+  });
+
+  it("adds the units column to shards created before it existed", async () => {
+    const s = await stub();
+    await runInDurableObject(s, (_instance, state) => {
+      state.storage.sql.exec(
+        "CREATE TABLE metrics_buffer (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER)",
+      );
+    });
+    await s.fetch("http://internal/push", {
+      method: "POST",
+      body: JSON.stringify({
+        entries: [metric({ method: "image", units: 2 })],
+      }),
+    });
+    await s.fetch("http://internal/flush");
+    const row = await env.DB.prepare(
+      `SELECT units FROM request_metrics WHERE organization_id = ?`,
+    )
+      .bind(ORG)
+      .first();
+    expect(row).toEqual({ units: 2 });
   });
 
   it("stores NULL timings for rows pushed without them", async () => {

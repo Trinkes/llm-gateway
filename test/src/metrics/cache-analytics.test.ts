@@ -78,7 +78,7 @@ function buildApp(): Hono<AppBindings> {
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
 });
 
@@ -105,6 +105,45 @@ describe("cache analytics", () => {
     expect(summary.promptCacheHits).toBe(1);
     expect(summary.promptCacheHitRate).toBeCloseTo(1 / 3, 6);
     expect(summary.responseCacheHits).toBe(0);
+  });
+
+  it("computes the prompt-cache hit rate over token rows only", async () => {
+    await seed({ tokensInput: 700, tokensCacheRead: 2000 }); // chat hit
+    await seed({ tokensInput: 50 }); // chat miss
+    // image and audio rows carry no token counts
+    for (const kind of ["image", "audio"]) {
+      await env.DB.prepare(
+        `INSERT INTO request_metrics
+           (id, organization_id, timestamp, provider, model, method,
+            status_code, latency_ms, cache_hit)
+         VALUES (?, ?, ?, 'local', 'm', ?, 200, 100, 0)`,
+      )
+        .bind(`metric_${uniq()}`, ORG, NOW - 30, kind)
+        .run();
+    }
+    const summary = await spendForRange(env as never, ORG, {
+      start: START,
+      end: END,
+    });
+    expect(summary.requests).toBe(4);
+    expect(summary.promptCacheHits).toBe(1);
+    expect(summary.promptCacheHitRate).toBeCloseTo(1 / 2, 6);
+  });
+
+  it("has a zero hit rate when no row carries tokens", async () => {
+    await env.DB.prepare(
+      `INSERT INTO request_metrics
+         (id, organization_id, timestamp, provider, model, method,
+          status_code, latency_ms, cache_hit)
+       VALUES (?, ?, ?, 'local', 'm', 'image', 200, 100, 0)`,
+    )
+      .bind(`metric_${uniq()}`, ORG, NOW - 30)
+      .run();
+    const summary = await spendForRange(env as never, ORG, {
+      start: START,
+      end: END,
+    });
+    expect(summary.promptCacheHitRate).toBe(0);
   });
 
   it("counts proxy response-cache hits separately from prompt caching", async () => {

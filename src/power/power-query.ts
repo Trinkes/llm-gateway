@@ -9,8 +9,10 @@
 import { hostBinding } from "../live/sources";
 import { vpcBindingNames } from "../llm/transport";
 import type { ModelPricing } from "../metrics/cost-tracker";
+import { TOKEN_ROWS_SQL } from "../metrics/request-kinds";
 import { safeJsonParse } from "../utils/crypto";
 import { FIT_WINDOW_S, type PairSums } from "./fallback-model";
+import type { KindBusy } from "./kind-energy";
 import type { Period } from "./periods";
 import type { PowerSettings } from "./power-settings";
 import type { PeriodRaw, TokenSums } from "./power-summary";
@@ -73,6 +75,16 @@ interface TokenRow {
   requests: number;
   cloud_usd: number;
   unpriced: number;
+}
+
+interface KindRow {
+  i: number;
+  kind: string;
+  requests: number;
+  units: number;
+  output: number;
+  input: number;
+  busy_s: number;
 }
 
 interface RateRow {
@@ -164,9 +176,17 @@ const boxProvidersSql = (org: string, bindings: string) => `
      AND json_extract(config, '$.settings.vpcBinding')
          IN (SELECT value FROM json_each(${bindings}))`;
 
+// The org's successful, non-cached box requests since the first host sample
+// (?2 org, [?3, ?4) range, ?5 host binding, ?6 vpc binding names).
+const BOX_ROWS_WHERE = `r.organization_id = ?2 AND r.timestamp >= ?3 AND r.timestamp < ?4
+     AND r.status_code < 400 AND COALESCE(r.cache_hit, 0) = 0
+     AND r.timestamp >= (${dataStartSql("?5")})
+     AND r.provider IN (${boxProvidersSql("?2", "?6")})`;
+
 // Each request is priced from model_pricing like getModelPricing: the exact
 // model row, else the provider's '*' row. Requests with neither are counted as
 // unpriced instead of getting the hard-coded default.
+// [fork] W17: token rows only, so image and other kinds are never "unpriced".
 const rate = (col: string) => `COALESCE(pe.${col}, pw.${col})`;
 const TOKENS_SQL = `WITH ${PERIODS_CTE},
 m AS (
@@ -181,10 +201,7 @@ m AS (
     FROM request_metrics r
     LEFT JOIN model_pricing pe ON pe.provider = r.provider AND pe.model = r.model
     LEFT JOIN model_pricing pw ON pw.provider = r.provider AND pw.model = '*'
-   WHERE r.organization_id = ?2 AND r.timestamp >= ?3 AND r.timestamp < ?4
-     AND r.status_code < 400 AND COALESCE(r.cache_hit, 0) = 0
-     AND r.timestamp >= (${dataStartSql("?5")})
-     AND r.provider IN (${boxProvidersSql("?2", "?6")}))
+   WHERE ${BOX_ROWS_WHERE} AND ${TOKEN_ROWS_SQL("r")})
 SELECT p.i, COALESCE(SUM(m.input), 0) AS input, COALESCE(SUM(m.output), 0) AS output,
        COALESCE(SUM(m.cache_read), 0) AS cache_read,
        COALESCE(SUM(m.cache_write), 0) AS cache_write, COUNT(m.ts) AS requests,
@@ -194,6 +211,18 @@ SELECT p.i, COALESCE(SUM(m.input), 0) AS input, COALESCE(SUM(m.output), 0) AS ou
        COUNT(m.ts) - COUNT(m.in_rate) AS unpriced
   FROM p LEFT JOIN m ON m.ts >= p.s AND m.ts < p.e
  GROUP BY p.i`;
+
+// [fork] W17: each kind's busy time (request-seconds) per period, over the
+// same rows as TOKENS_SQL but every kind: the energy split's weights.
+const KINDS_SQL = `WITH ${PERIODS_CTE}
+SELECT p.i, r.method AS kind, COUNT(*) AS requests,
+       COALESCE(SUM(r.units), 0) AS units,
+       COALESCE(SUM(r.tokens_output), 0) AS output,
+       COALESCE(SUM(r.tokens_input), 0) AS input,
+       SUM(r.latency_ms) / 1000.0 AS busy_s
+  FROM p JOIN request_metrics r ON r.timestamp >= p.s AND r.timestamp < p.e
+ WHERE ${BOX_ROWS_WHERE}
+ GROUP BY p.i, r.method`;
 
 /** The model_pricing rows the box's requests can be priced from. */
 const RATES_SQL = `SELECT provider, model, input_per_1m, output_per_1m,
@@ -269,6 +298,7 @@ function emptyPeriods(periods: Period[]): PeriodRaw[] {
     tokens: { ...EMPTY_TOKENS },
     cloudUsd: 0,
     unpricedRequests: 0,
+    kinds: [] as KindBusy[],
   }));
 }
 
@@ -300,7 +330,8 @@ export async function loadPowerData(
   const to = Math.max(...periods.map((p) => p.end));
   const rawFrom = Math.max(from, now - RAW_RETENTION_S);
   const bindings = JSON.stringify(vpcBindingNames(env, orgId));
-  const [settings, first, rollups, raw, tokens, idle, pairs, rates] =
+  const tokenBindings = [json, orgId, from, to, host.name, bindings];
+  const [settings, first, rollups, raw, tokens, kinds, idle, pairs, rates] =
     await env.DB.batch<unknown>([
       settingsStmt,
       env.DB.prepare(dataStartSql("?1")).bind(host.name),
@@ -311,14 +342,8 @@ export async function loadPowerData(
         rawFrom - (rawFrom % ROLLUP_S),
         Math.min(to, now + ROLLUP_S),
       ),
-      env.DB.prepare(TOKENS_SQL).bind(
-        json,
-        orgId,
-        from,
-        to,
-        host.name,
-        bindings,
-      ),
+      env.DB.prepare(TOKENS_SQL).bind(...tokenBindings),
+      env.DB.prepare(KINDS_SQL).bind(...tokenBindings),
       env.DB.prepare(IDLE_SQL).bind(host.name, now - IDLE_WINDOW_S),
       env.DB.prepare(PAIRS_SQL).bind(host.name, now - FIT_WINDOW_S),
       env.DB.prepare(RATES_SQL).bind(orgId, bindings),
@@ -345,6 +370,16 @@ export async function loadPowerData(
     };
     out[row.i].cloudUsd = row.cloud_usd;
     out[row.i].unpricedRequests = row.unpriced;
+  }
+  for (const row of kinds.results as KindRow[]) {
+    out[row.i].kinds.push({
+      kind: row.kind,
+      requests: row.requests,
+      units: row.units,
+      output: row.output,
+      input: row.input,
+      busySeconds: row.busy_s,
+    });
   }
   return {
     settings: parseSettings(

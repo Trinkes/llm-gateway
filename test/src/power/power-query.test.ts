@@ -2,6 +2,7 @@
 import { createBoxTables } from "../live/box-schema";
 import { env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { KindBusy } from "~/src/power/kind-energy";
 import { loadPowerData } from "~/src/power/power-query";
 
 const ORG = "org_power";
@@ -82,28 +83,40 @@ async function request(
     provider?: string;
     status?: number;
     cacheHit?: number;
+    // [fork] W17: kind rows; a non-chat kind carries no tokens.
+    method?: string;
+    units?: number | null;
+    latencyMs?: number;
   } = {},
 ) {
+  const method = over.method ?? "chat";
+  const tok = (v: number) => (method === "chat" ? v : null);
   await env.DB.prepare(
     `INSERT INTO request_metrics
        (id, organization_id, timestamp, provider, model, method, status_code, latency_ms,
-        tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, cache_hit)
-     VALUES (?, ?, ?, ?, 'm', 'chat', ?, 100, 1000, 200, 300, NULL, ?)`,
+        tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, cache_hit, units)
+     VALUES (?, ?, ?, ?, 'm', ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
   )
     .bind(
       `r${n++}`,
       over.org ?? ORG,
       ts,
       over.provider ?? "local-m5",
+      method,
       over.status ?? 200,
+      over.latencyMs ?? 100,
+      tok(1000),
+      tok(200),
+      tok(300),
       over.cacheHit ?? 0,
+      over.units ?? null,
     )
     .run();
 }
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS provider_configs (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, config TEXT NOT NULL, UNIQUE(organization_id, provider));",
@@ -346,6 +359,96 @@ describe("loadPowerData tokens", () => {
   });
 });
 
+// [fork] W17: per-kind busy time for the energy split.
+describe("loadPowerData kinds", () => {
+  it("sums each kind's busy time per period over the token-row filter", async () => {
+    await host(600, T0, 10);
+    await request(T0 + 10, { latencyMs: 1500 });
+    await request(T0 + 20, { latencyMs: 500 });
+    await request(T0 + 30, { method: "image", units: 2, latencyMs: 30_000 });
+    await request(T0 + 40, { method: "image", units: 1, latencyMs: 10_000 });
+    await request(T0 + 50, { method: "audio", latencyMs: 4000 });
+    await request(T0 + 60, { method: "image", units: 3, status: 500 });
+    await request(T0 + 60, { method: "image", units: 3, cacheHit: 1 });
+    await request(T0 + 60, { method: "image", provider: "openai" });
+    await request(T0 + 60, { method: "image", org: OTHER });
+    await request(T0 + 3700, { method: "image", units: 4, latencyMs: 8000 });
+    const { periods } = await loadPowerData(
+      e,
+      ORG,
+      [
+        { start: T0, end: T0 + 3600 },
+        { start: T0 + 3600, end: NOW },
+      ],
+      NOW,
+    );
+    const byKind = (k: KindBusy[]) =>
+      [...k].sort((a, b) => a.kind.localeCompare(b.kind));
+    expect(byKind(periods[0].kinds)).toEqual([
+      {
+        kind: "audio",
+        requests: 1,
+        units: 0,
+        output: 0,
+        input: 0,
+        busySeconds: 4,
+      },
+      {
+        kind: "chat",
+        requests: 2,
+        units: 0,
+        output: 400,
+        input: 2000,
+        busySeconds: 2,
+      },
+      {
+        kind: "image",
+        requests: 2,
+        units: 3,
+        output: 0,
+        input: 0,
+        busySeconds: 40,
+      },
+    ]);
+    expect(periods[1].kinds).toEqual([
+      {
+        kind: "image",
+        requests: 1,
+        units: 4,
+        output: 0,
+        input: 0,
+        busySeconds: 8,
+      },
+    ]);
+  });
+
+  it("image and unknown rows are not tokens and not unpriced", async () => {
+    await host(600, T0, 10);
+    await request(T0 + 10);
+    await request(T0 + 20, { method: "image", units: 1 });
+    await request(T0 + 30, { method: "audio" });
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0].tokens.requests).toBe(1);
+    expect(periods[0].unpricedRequests).toBe(1);
+  });
+
+  it("a period without requests has no kinds", async () => {
+    await host(600, T0, 10);
+    const { periods } = await loadPowerData(e, ORG, range, NOW);
+    expect(periods[0].kinds).toEqual([]);
+  });
+
+  it("no host gives empty kinds", async () => {
+    const { periods } = await loadPowerData(
+      { ...e, HOST_METRICS_BINDINGS: "" } as Env,
+      ORG,
+      range,
+      NOW,
+    );
+    expect(periods[0].kinds).toEqual([]);
+  });
+});
+
 describe("loadPowerData cloud pricing", () => {
   // each request: 1000 in, 200 out, 300 cache read, model 'm'
   it("prices from the provider's '*' row", async () => {
@@ -409,8 +512,16 @@ describe("loadPowerData idle and settings", () => {
     await host(600, NOW - 600, 100, { wall: 130, wallSamples: 60 });
     await host(600, NOW - 1200, 100, { wall: 130, wallSamples: 50 }); // partial
     await host(600, NOW - 8 * DAY, 100, { wall: 130, wallSamples: 60 }); // old
-    await host(600, NOW - 1800, 100, { samples: 29, wall: 130, wallSamples: 29 });
-    await host(600, NOW - 2400, 100, { samples: 30, wall: 140, wallSamples: 30 });
+    await host(600, NOW - 1800, 100, {
+      samples: 29,
+      wall: 130,
+      wallSamples: 29,
+    });
+    await host(600, NOW - 2400, 100, {
+      samples: 30,
+      wall: 140,
+      wallSamples: 30,
+    });
     expect((await loadPowerData(e, ORG, range, NOW)).pairs).toEqual({
       n: 2,
       sx: 200,
@@ -490,6 +601,7 @@ describe("loadPowerData without a host binding", () => {
           },
           cloudUsd: 0,
           unpricedRequests: 0,
+          kinds: [],
         },
       ],
     });

@@ -1,7 +1,6 @@
 import { TenantService } from "../db/tenant";
 import { getProviderConfig } from "../llm/credential-store";
 import { upstreamModelId } from "../llm/model-aliases";
-import { resolveDefaultModel } from "../llm/model-catalog";
 import {
   assertModelAllowed,
   assertProviderAllowed,
@@ -12,16 +11,18 @@ import {
   isOpenAICompatibleProvider,
 } from "../llm/provider-registry";
 import { V1OpenAICompatibleClient } from "../llm/v1-provider";
+import { recordChatRequest, type ChatAttempt } from "../metrics/request-logger";
 import { ApiKeyAuth } from "../types";
 
 export interface EmbeddingsInput {
   request: Request;
   env: Env;
   apiKeyAuth: ApiKeyAuth;
+  ctx: { waitUntil(promise: Promise<unknown>): void }; // [fork] W17
 }
 
 export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
-  const { request, env, apiKeyAuth } = input;
+  const { request, env, apiKeyAuth, ctx } = input;
   const organizationId = apiKeyAuth.organizationId;
   const settings = await new TenantService(env.DB).getSettings(organizationId);
   const blocked = assertTenantActive(settings);
@@ -67,17 +68,11 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
       `Provider '${provider}' does not support OpenAI embeddings`,
     );
   }
-  const resolvedModel = model || resolveDefaultModel(config.settings, provider);
-  if (!resolvedModel)
-    return errorBody(
-      "not_configured",
-      `Provider '${provider}' has no default model configured`,
-    );
   const modelError = assertModelAllowed(
     settings,
     apiKeyAuth.scopes,
     provider,
-    resolvedModel,
+    model,
   );
   if (modelError) return errorBody(modelError.code, modelError.message);
 
@@ -95,35 +90,72 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
           }
         : undefined,
   });
+  // [fork] W17: one `embedding` row per upstream call, like chat.
+  const attempt: ChatAttempt = {
+    organizationId,
+    apiKeyId: apiKeyAuth.keyId,
+    startedAt: Date.now(),
+    provider,
+    model: model,
+    method: "embedding",
+  };
+  // [fork] W17
+  const record = (outcome: Parameters<typeof recordChatRequest>[2]) =>
+    ctx.waitUntil(
+      recordChatRequest(env, attempt, outcome).catch((err) =>
+        console.error("failed to record embedding metrics", err),
+      ),
+    );
   let upstream: Response;
   try {
     upstream = await client.embeddings(
       JSON.stringify({
         ...body,
-        model: upstreamModelId(config.settings, resolvedModel), // [fork] W18
+        model: upstreamModelId(config.settings, model), // [fork] W18
       }),
       { signal: request.signal },
     );
   } catch (error) {
-    return errorBody(
-      "upstream_error",
-      error instanceof Error ? error.message : String(error),
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    record({ statusCode: 502, errorMessage: message });
+    return errorBody("upstream_error", message);
   }
   if (!upstream.ok) {
     const text = await upstream.text();
-    return errorBody(
-      "upstream_error",
-      `Upstream error (${upstream.status}): ${text.slice(0, 512)}`,
-    );
+    const message = `Upstream error (${upstream.status}): ${text.slice(0, 512)}`;
+    record({ statusCode: upstream.status, errorMessage: message });
+    return errorBody("upstream_error", message);
   }
-  return new Response(upstream.body, {
+  // Buffered (not streamed): the usage is read from the body to record it;
+  // embeddings replies are small JSON.
+  const text = await upstream.text();
+  record({
+    statusCode: upstream.status,
+    usage: {
+      input: promptTokens(text),
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+  });
+  return new Response(text, {
     status: upstream.status,
     headers: {
       "Content-Type":
         upstream.headers.get("content-type") ?? "application/json",
     },
   });
+}
+
+/** `usage.prompt_tokens` of an embeddings reply; 0 when absent or malformed. */
+function promptTokens(text: string): number {
+  try {
+    const tokens = (JSON.parse(text) as { usage?: { prompt_tokens?: unknown } })
+      .usage?.prompt_tokens;
+    return typeof tokens === "number" && tokens > 0 ? tokens : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function errorBody(code: string, message: string): Response {

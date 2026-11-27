@@ -30,6 +30,8 @@ interface SeedRow {
   costUsd?: number | null;
   timestamp?: number;
   organizationId?: string;
+  kind?: string;
+  units?: number | null;
 }
 
 async function seedKeys() {
@@ -48,19 +50,21 @@ async function seed(rows: SeedRow[]) {
       env.DB.prepare(
         `INSERT INTO request_metrics
            (id, organization_id, api_key_id, timestamp, provider, model, method, status_code,
-            latency_ms, tokens_input, tokens_output, tokens_cache_read, cost_usd, cache_hit)
-         VALUES (?, ?, ?, ?, 'local-m5', 'qwen', 'chat', ?, ?, ?, ?, ?, ?, 0)`,
+            latency_ms, tokens_input, tokens_output, tokens_cache_read, cost_usd, cache_hit, units)
+         VALUES (?, ?, ?, ?, 'local-m5', 'qwen', ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
       ).bind(
         `m_${Math.random().toString(36).slice(2)}`,
         r.organizationId ?? ORG,
         r.apiKeyId === undefined ? "key_a" : r.apiKeyId,
         r.timestamp ?? NOW - 30,
+        r.kind ?? "chat",
         r.statusCode ?? 200,
         r.latencyMs ?? 100,
         r.tokensInput ?? null,
         r.tokensOutput ?? null,
         r.tokensCacheRead ?? null,
         r.costUsd ?? null,
+        r.units ?? null,
       ),
     ),
   );
@@ -68,7 +72,7 @@ async function seed(rows: SeedRow[]) {
 
 beforeAll(async () => {
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+    "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
   );
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER, expires_at INTEGER, status TEXT NOT NULL DEFAULT 'active', scopes TEXT NOT NULL DEFAULT '{}', spend_disabled_until INTEGER);",
@@ -122,6 +126,15 @@ describe("usageByKey", () => {
         costUsd: 0.75,
         latencyAvgMs: 135,
         lastRequestAt: NOW - 10,
+        kinds: [
+          {
+            kind: "chat",
+            unit: "tokens",
+            label: "Chat",
+            requests: 3,
+            units: 0,
+          },
+        ],
       },
       {
         apiKeyId: "key_b",
@@ -136,6 +149,15 @@ describe("usageByKey", () => {
         costUsd: 0,
         latencyAvgMs: 100,
         lastRequestAt: NOW - 30,
+        kinds: [
+          {
+            kind: "chat",
+            unit: "tokens",
+            label: "Chat",
+            requests: 1,
+            units: 0,
+          },
+        ],
       },
       {
         apiKeyId: null,
@@ -150,7 +172,61 @@ describe("usageByKey", () => {
         costUsd: 0,
         latencyAvgMs: 100,
         lastRequestAt: NOW - 30,
+        kinds: [
+          {
+            kind: "chat",
+            unit: "tokens",
+            label: "Chat",
+            requests: 1,
+            units: 0,
+          },
+        ],
       },
+    ]);
+  });
+
+  it("splits each key per kind, including unknown kinds", async () => {
+    await seed([
+      { tokensInput: 5 },
+      { kind: "image", units: 2 },
+      { kind: "image", units: 3 },
+      { kind: "audio" },
+      { apiKeyId: null, kind: "image", units: 1 },
+    ]);
+    const usage = await usageByKey(env, ORG, START, END);
+    expect(usage.map((u) => [u.apiKeyId, u.kinds])).toEqual([
+      [
+        "key_a",
+        [
+          {
+            kind: "image",
+            unit: "images",
+            label: "Image",
+            requests: 2,
+            units: 5,
+          },
+          { kind: "audio", unit: null, label: "audio", requests: 1, units: 0 },
+          {
+            kind: "chat",
+            unit: "tokens",
+            label: "Chat",
+            requests: 1,
+            units: 0,
+          },
+        ],
+      ],
+      [
+        null,
+        [
+          {
+            kind: "image",
+            unit: "images",
+            label: "Image",
+            requests: 1,
+            units: 1,
+          },
+        ],
+      ],
     ]);
   });
 

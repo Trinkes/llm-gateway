@@ -46,6 +46,7 @@ import {
   type LiveSeriesState,
 } from "../lib/liveSeries";
 import { ramBreakdown } from "../lib/ramBreakdown";
+import { formatUsage } from "../lib/requestKinds";
 import type { RangePreset } from "../lib/timeRange";
 import { useLiveRange } from "../lib/useLiveRange";
 import { useQuery } from "@tanstack/react-query";
@@ -336,30 +337,44 @@ export function LivePage() {
         </Card>
       </div>
 
+      {/* [fork] W17: last request shown by its kind unit */}
       <Card
-        title="Last inference"
+        title="Last request"
         subtitle={
           last
-            ? `${last.model} · ${fmtDateTime(last.timestamp).full}`
+            ? `${last.kind_label} · ${last.model} · ${fmtDateTime(last.timestamp).full}`
             : undefined
         }
       >
         {last ? (
-          <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
-            <StatCard
-              label="Decode"
-              value={fmtTps(rowDecodeTps(last.tokens_output, last.decode_ms))}
-            />
-            <StatCard label="TTFT" value={fmtMs(last.ttft_ms)} />
-            <StatCard
-              label="Prompt tokens"
-              value={fmtTokens(last.tokens_input)}
-            />
-            <StatCard
-              label="Completion tokens"
-              value={fmtTokens(last.tokens_output)}
-            />
-          </div>
+          last.kind_unit === "tokens" ? (
+            <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
+              <StatCard
+                label="Decode"
+                value={fmtTps(rowDecodeTps(last.tokens_output, last.decode_ms))}
+              />
+              <StatCard label="TTFT" value={fmtMs(last.ttft_ms)} />
+              <StatCard
+                label="Prompt tokens"
+                value={fmtTokens(last.tokens_input)}
+              />
+              <StatCard
+                label="Completion tokens"
+                value={fmtTokens(last.tokens_output)}
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
+              <StatCard label="Kind" value={last.kind_label} />
+              <StatCard label="Duration" value={fmtMs(last.latency_ms)} />
+              {last.kind_unit === "images" && (
+                <StatCard
+                  label="Images"
+                  value={formatUsage("images", { units: last.units })}
+                />
+              )}
+            </div>
+          )
         ) : (
           <EmptyState title="No requests yet" />
         )}

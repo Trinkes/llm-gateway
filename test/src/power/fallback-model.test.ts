@@ -116,7 +116,13 @@ describe("chooseFallbackModel", () => {
 
 describe("modelWatts", () => {
   it("applies k and c", () => {
-    const m = { kind: "fit", k: 1.1, c: 20, pairs: 200, windowDays: 7 } as const;
+    const m = {
+      kind: "fit",
+      k: 1.1,
+      c: 20,
+      pairs: 200,
+      windowDays: 7,
+    } as const;
     expect(modelWatts(m, 100)).toBeCloseTo(130, 9);
   });
 });

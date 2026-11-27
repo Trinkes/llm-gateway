@@ -3,6 +3,7 @@ import { cacheUsageByModel, spendForRange } from "../metrics/cost-tracker";
 import { keyDetailUsage } from "../metrics/key-detail";
 import { usageByKey } from "../metrics/key-usage";
 import { percentile } from "../metrics/percentile";
+import { kindInfo } from "../metrics/request-kinds";
 import {
   getRequest,
   listRequests,
@@ -26,6 +27,7 @@ function rangeParams(c: { req: { query: (k: string) => string | undefined } }) {
     end: Number.isFinite(end) ? end : now,
     provider: q("provider") ?? undefined,
     model: q("model") ?? undefined,
+    kind: q("kind") || undefined,
   };
 }
 
@@ -38,7 +40,7 @@ function validateRange(start: number, end: number): string | null {
 // GET /api/metrics/summary — aggregated throughput/cost/errors for the tenant.
 metricsRouter.get("/summary", async (c) => {
   const orgId = c.get("session")!.organizationId!;
-  const { start, end, provider, model } = rangeParams(c);
+  const { start, end, provider, model, kind } = rangeParams(c);
   const invalid = validateRange(start, end);
   if (invalid) return c.json({ error: invalid }, 400);
 
@@ -47,11 +49,13 @@ metricsRouter.get("/summary", async (c) => {
     end,
     provider,
     model,
+    kind,
+    withKinds: true,
   });
   return c.json({ summary });
 });
 
-// GET /api/metrics/latency — p50/p95/p99 per provider over the window.
+// GET /api/metrics/latency — p50/p95/p99 per provider + kind over the window.
 metricsRouter.get("/latency", async (c) => {
   const orgId = c.get("session")!.organizationId!;
   const { start, end, provider } = rangeParams(c);
@@ -69,31 +73,46 @@ metricsRouter.get("/latency", async (c) => {
   }
 
   const { results } = await c.env.DB.prepare(
-    `SELECT provider, latency_ms FROM request_metrics WHERE ${where.join(" AND ")} ORDER BY provider, latency_ms`,
+    `SELECT provider, method AS kind, latency_ms FROM request_metrics WHERE ${where.join(" AND ")} ORDER BY provider, method, latency_ms`,
   )
     .bind(...params)
-    .all<{ provider: string; latency_ms: number }>();
+    .all<{ provider: string; kind: string; latency_ms: number }>();
 
-  const byProvider = new Map<string, number[]>();
+  // [fork] W17: one group per provider + kind.
+  const groups = new Map<
+    string,
+    { provider: string; kind: string; vals: number[] }
+  >();
   for (const row of results) {
-    const list = byProvider.get(row.provider) ?? [];
-    list.push(row.latency_ms);
-    byProvider.set(row.provider, list);
+    const key = `${row.provider}\u0000${row.kind}`;
+    const group = groups.get(key) ?? {
+      provider: row.provider,
+      kind: row.kind,
+      vals: [],
+    };
+    group.vals.push(row.latency_ms);
+    groups.set(key, group);
   }
 
-  const latency = Array.from(byProvider.entries()).map(([pv, vals]) => {
-    const sorted = vals.sort((a, b) => a - b);
-    const n = sorted.length;
-    const avg = sorted.reduce((a, b) => a + b, 0) / n;
-    return {
-      provider: pv,
-      requests: n,
-      p50: percentile(sorted, 0.5),
-      p95: percentile(sorted, 0.95),
-      p99: percentile(sorted, 0.99),
-      avg: Math.round(avg),
-    };
-  });
+  const latency = Array.from(groups.values()).map(
+    ({ provider: pv, kind, vals }) => {
+      const sorted = vals.sort((a, b) => a - b);
+      const n = sorted.length;
+      const avg = sorted.reduce((a, b) => a + b, 0) / n;
+      const info = kindInfo(kind);
+      return {
+        provider: pv,
+        kind,
+        unit: info.unit,
+        label: info.label,
+        requests: n,
+        p50: percentile(sorted, 0.5),
+        p95: percentile(sorted, 0.95),
+        p99: percentile(sorted, 0.99),
+        avg: Math.round(avg),
+      };
+    },
+  );
 
   return c.json({ start, end, latency });
 });
@@ -154,7 +173,7 @@ metricsRouter.get("/keys/:id", async (c) => {
 });
 
 // GET /api/metrics/requests — newest-first request rows plus total count.
-// Filters: provider, model, apiKeyId ("none" = keyless), status, cache.
+// Filters: provider, model, kind, apiKeyId ("none" = keyless), status, cache.
 metricsRouter.get("/requests", async (c) => {
   const orgId = c.get("session")!.organizationId!;
   const { start, end, provider } = rangeParams(c);

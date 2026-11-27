@@ -149,6 +149,23 @@ describe("countRequests", () => {
     );
     expect(counts).toEqual([1, 1, 1]);
   });
+
+  // [fork] W17: a token-less image row is still active load.
+  it("counts a token-less image request that adds no tok/s", () => {
+    const image = req({
+      timestamp: 125,
+      latency_ms: 20_000,
+      ttft_ms: null,
+      decode_ms: null,
+      prefill_tokens: 0,
+      tokens_output: 0,
+    });
+    const pts = spreadThroughput([image], 100, 130, 10);
+    expect(pts.every((p) => p.decodeTps === 0 && p.prefillTps === 0)).toBe(
+      true,
+    );
+    expect(countRequests([image], 100, 130, 10)).toEqual([1, 1, 1]);
+  });
 });
 
 describe("rollupThroughput", () => {
@@ -181,7 +198,7 @@ describe("rollupThroughput", () => {
 describe("throughputRowsStatement", () => {
   beforeAll(async () => {
     await env.DB.exec(
-      "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER);",
+      "CREATE TABLE IF NOT EXISTS request_metrics (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, user_id TEXT, api_key_id TEXT, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, method TEXT NOT NULL, status_code INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_input INTEGER, tokens_output INTEGER, tokens_cached INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, error_message TEXT, cache_hit INTEGER NOT NULL DEFAULT 0, ttft_ms INTEGER, decode_ms INTEGER, units INTEGER);",
     );
   });
 

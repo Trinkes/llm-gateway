@@ -9,6 +9,7 @@ import {
 } from "../lib/format";
 import { smallestLivePreset } from "../lib/liveRangeFor";
 import { NO_API_KEY } from "../lib/requestExplorer";
+import { formatUsage } from "../lib/requestKinds";
 import { RequestCacheBadge } from "./RequestCacheBadge";
 import { RequestStatusBadge } from "./RequestStatusBadge";
 import { Badge, EmptyState, Spinner } from "./ui";
@@ -113,6 +114,8 @@ function DetailBody({
   const cacheRead = r.tokens_cache_read ?? 0;
   const cacheWrite = r.tokens_cache_write ?? 0;
   const output = r.tokens_output ?? 0;
+  // [fork] W17: token breakdown only for rows that carry tokens.
+  const unit = r.kind_unit;
   const box = useQuery({
     queryKey: ["live-at", r.id],
     queryFn: () => liveAt(r.id),
@@ -125,7 +128,7 @@ function DetailBody({
         <div className="flex flex-wrap items-center gap-2">
           <RequestStatusBadge status={r.status_code} />
           <RequestCacheBadge row={r} />
-          <Badge>{r.method}</Badge>
+          <Badge>{r.kind_label}</Badge>
         </div>
         <p className="text-sm text-gray-500">{when.full}</p>
         <p className="break-all font-mono text-[11px] text-gray-400">{r.id}</p>
@@ -197,25 +200,42 @@ function DetailBody({
 
       <Section title="Timing">
         <Field label="Total latency">{fmtMs(r.latency_ms)}</Field>
-        <Field label="Time to first token">{fmtMs(r.ttft_ms)}</Field>
-        <Field label="Decode time">{fmtMs(r.decode_ms)}</Field>
-        <Field label="Decode speed">
-          {fmtTps(rowDecodeTps(r.tokens_output, r.decode_ms))}
-        </Field>
-        <Field label="Prefill speed">{fmtTps(prefillTps(r))}</Field>
+        {unit === "tokens" && (
+          <>
+            <Field label="Time to first token">{fmtMs(r.ttft_ms)}</Field>
+            <Field label="Decode time">{fmtMs(r.decode_ms)}</Field>
+            <Field label="Decode speed">
+              {fmtTps(rowDecodeTps(r.tokens_output, r.decode_ms))}
+            </Field>
+            <Field label="Prefill speed">{fmtTps(prefillTps(r))}</Field>
+          </>
+        )}
       </Section>
 
-      <Section title="Tokens">
-        <Field label="Input (uncached)">{fmtTokens(input)}</Field>
-        <Field label="Prompt cache read">{fmtTokens(cacheRead)}</Field>
-        <Field label="Prompt cache write">{fmtTokens(cacheWrite)}</Field>
-        <Field label="Output">{fmtTokens(output)}</Field>
-        <Field label="Total">
-          <span className="font-medium">
-            {fmtTokens(input + cacheRead + cacheWrite + output)}
-          </span>
-        </Field>
-      </Section>
+      {unit === "tokens" ? (
+        <Section title="Tokens">
+          <Field label="Input (uncached)">{fmtTokens(input)}</Field>
+          <Field label="Prompt cache read">{fmtTokens(cacheRead)}</Field>
+          <Field label="Prompt cache write">{fmtTokens(cacheWrite)}</Field>
+          <Field label="Output">{fmtTokens(output)}</Field>
+          <Field label="Total">
+            <span className="font-medium">
+              {fmtTokens(input + cacheRead + cacheWrite + output)}
+            </span>
+          </Field>
+        </Section>
+      ) : (
+        <Section title="Usage">
+          {unit === "images" && (
+            <Field label="Images">
+              {formatUsage(unit, { units: r.units })}
+            </Field>
+          )}
+          <Field label="Time">
+            {formatUsage(null, { latencyMs: r.latency_ms })}
+          </Field>
+        </Section>
+      )}
 
       <Section title="Cost">
         <Field label="Cost">

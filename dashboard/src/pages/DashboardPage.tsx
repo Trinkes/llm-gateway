@@ -3,6 +3,7 @@ import { UpstreamHealthBadges } from "../components/UpstreamHealthBadges";
 import { Badge, Card, EmptyState, Spinner, StatCard } from "../components/ui";
 import { apiGet } from "../lib/api";
 import { fmtCount, fmtDay, fmtUsd, fmtTokens } from "../lib/format";
+import type { KindUsage } from "../lib/requestKinds";
 import { RangePreset } from "../lib/timeRange";
 import { useTimeRange } from "../lib/useTimeRange";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -40,6 +41,8 @@ export function DashboardPage() {
           /** Requests with at least one provider prompt-cache hit + share. */
           promptCacheHits?: number | null;
           promptCacheHitRate?: number | null;
+          /** [fork] W17: requests per kind. */
+          byKind?: KindUsage[];
         };
       }>(`/api/usage/costs?start=${time.start}&end=${time.end}`),
   });
@@ -103,6 +106,14 @@ export function DashboardPage() {
     responseCacheHits > 0 ||
     (summary.promptCacheHits ?? 0) > 0;
 
+  // [fork] W17: requests per kind, then response-cache hits.
+  const requestsHint = [
+    ...(summary.byKind ?? []).map((k) => `${fmtCount(k.requests)} ${k.label}`),
+    ...(responseCacheHits > 0
+      ? [`${fmtCount(responseCacheHits)} response-cache hits`]
+      : []),
+  ].join(" · ");
+
   const alertMsg = (() => {
     for (const [label, check] of [
       ["Daily", alerts.data?.daily],
@@ -163,11 +174,7 @@ export function DashboardPage() {
         <StatCard
           label="Requests"
           value={fmtCount(summary.requests)}
-          hint={
-            responseCacheHits > 0
-              ? `${fmtCount(responseCacheHits)} response-cache hits`
-              : undefined
-          }
+          hint={requestsHint || undefined}
         />
       </div>
 
