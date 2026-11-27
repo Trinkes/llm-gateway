@@ -17,6 +17,8 @@ import {
 import { checkRateLimits } from "../llm/rate-limit";
 import { resolveFetcher, type UpstreamFetcher } from "../llm/transport";
 import { V1OpenAICompatibleClient } from "../llm/v1-provider";
+import { computeCostUsd, getModelPricing } from "../metrics/cost-tracker";
+import { imageOutputTokens } from "../metrics/image-tokens";
 import { imageCount } from "../metrics/request-kinds";
 import { recordChatRequest, type ChatAttempt } from "../metrics/request-logger";
 import { ApiKeyAuth } from "../types";
@@ -42,6 +44,9 @@ export interface ImageGenerationsInput {
 interface ImageRequestBody {
   model?: unknown;
   prompt?: unknown;
+  size?: unknown;
+  quality?: unknown;
+  n?: unknown;
   [key: string]: unknown;
 }
 
@@ -121,9 +126,9 @@ export async function imageGenerationsV2(
       `Provider '${provider}' does not support OpenAI image generations`,
     );
   }
-  // Image rows are recorded at cost 0 and charge no token budget, so only
-  // self-hosted (vpc) providers may serve them: a paid public provider here
-  // would bypass spend caps.
+  // [fork] W19: images are priced as output tokens, but a public provider's
+  // real bill could differ from that estimate, so only self-hosted (vpc)
+  // providers serve them until public providers are reviewed.
   if (config.settings.transport !== "vpc") {
     return errorBody(
       400,
@@ -139,6 +144,9 @@ export async function imageGenerationsV2(
   );
   if (modelError) return policyError(modelError);
 
+  // [fork] W19: the request's size, quality and n as output tokens.
+  const imageTokens = imageOutputTokens(body);
+
   let fetcher: UpstreamFetcher | undefined;
   try {
     fetcher = resolveFetcher(env, config.settings, organizationId);
@@ -150,7 +158,7 @@ export async function imageGenerationsV2(
     organizationId,
     apiKeyId: apiKeyAuth.keyId,
     settings,
-    estimatedTokens: 0,
+    estimatedTokens: imageTokens,
   });
   if (!rate.allowed) {
     return new Response(
@@ -196,14 +204,27 @@ export async function imageGenerationsV2(
   const record = (statusCode: number, errorMessage?: string) => {
     if (recorded) return;
     recorded = true;
+    // [fork] W17: a failed request produced no images.
+    const succeeded = statusCode < 400;
     ctx.waitUntil(
-      recordChatRequest(env, attempt, {
-        statusCode,
-        costUsd: 0,
-        // [fork] W17: a failed request produced no images.
-        units: statusCode < 400 ? imageCount(body.n) : null,
-        ...(errorMessage ? { errorMessage } : {}),
-      }).catch((err) => console.error("failed to record image metrics", err)),
+      (async () => {
+        // [fork] W19: priced, not stored as tokens, so image rows stay out
+        // of token stats (request-kinds.ts TOKEN_ROWS_SQL).
+        const costUsd = succeeded
+          ? computeCostUsd(await getModelPricing(env, provider, model), {
+              input: 0,
+              output: imageTokens,
+              cacheRead: 0,
+              cacheWrite: 0,
+            })
+          : 0;
+        await recordChatRequest(env, attempt, {
+          statusCode,
+          costUsd,
+          units: succeeded ? imageCount(body.n) : null,
+          ...(errorMessage ? { errorMessage } : {}),
+        });
+      })().catch((err) => console.error("failed to record image metrics", err)),
     );
   };
 

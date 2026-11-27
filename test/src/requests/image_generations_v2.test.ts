@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getProviderConfig } from "~/src/llm/credential-store";
 import type { DecryptedProviderConfig } from "~/src/llm/credential-store";
 import { checkRateLimits } from "~/src/llm/rate-limit";
+import { getModelPricing } from "~/src/metrics/cost-tracker";
 import { recordChatRequest } from "~/src/metrics/request-logger";
 import { imageGenerationsV2 } from "~/src/requests/image_generations_v2";
 import type { ApiKeyAuth } from "~/src/types";
@@ -25,6 +26,11 @@ vi.mock("~/src/llm/rate-limit", () => ({
   checkRateLimits: vi.fn(),
 }));
 
+vi.mock("~/src/metrics/cost-tracker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/src/metrics/cost-tracker")>()),
+  getModelPricing: vi.fn(),
+}));
+
 vi.mock("~/src/metrics/request-logger", () => ({
   recordChatRequest: vi.fn().mockResolvedValue(undefined),
 }));
@@ -32,6 +38,17 @@ vi.mock("~/src/metrics/request-logger", () => ({
 const mockGetProviderConfig = vi.mocked(getProviderConfig);
 const mockCheckRateLimits = vi.mocked(checkRateLimits);
 const mockRecord = vi.mocked(recordChatRequest);
+const mockGetModelPricing = vi.mocked(getModelPricing);
+
+/** $40 per 1M output tokens, OpenAI's image output rate. */
+const IMAGE_PRICING = {
+  provider: "local-box",
+  model: "z-image-turbo",
+  inputPer1m: 0,
+  outputPer1m: 40,
+  cacheReadPer1m: 0,
+  cacheWritePer1m: 0,
+};
 
 const baseAuth = {
   keyId: "key_1",
@@ -109,6 +126,7 @@ describe("imageGenerationsV2", () => {
     vi.clearAllMocks();
     mockGetProviderConfig.mockResolvedValue(imageBox);
     mockCheckRateLimits.mockResolvedValue({ allowed: true });
+    mockGetModelPricing.mockResolvedValue(IMAGE_PRICING);
     tenant.settings = {};
     pending.length = 0;
   });
@@ -169,7 +187,55 @@ describe("imageGenerationsV2", () => {
       model: "z-image-turbo",
       method: "image",
     });
-    expect(outcome).toEqual({ statusCode: 200, costUsd: 0, units: 1 });
+    // Default body: 1536x1024, no quality (high) → 6240 tokens at $40 / 1M.
+    expect(outcome).toEqual({ statusCode: 200, costUsd: 0.2496, units: 1 });
+    expect(mockGetModelPricing).toHaveBeenCalledWith(
+      expect.anything(),
+      "local-box",
+      "z-image-turbo",
+    );
+  });
+
+  it("prices by size, quality and n", async () => {
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+
+    await generate(boxEnv(binding), {
+      body: {
+        model: "local-box/z-image-turbo",
+        prompt: "a cat",
+        size: "1024x1024",
+        quality: "low",
+        n: 2,
+      },
+    });
+    await settled();
+
+    // 2 × 272 tokens at $40 / 1M.
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({ costUsd: 0.02176 });
+  });
+
+  it("keeps image tokens out of the token columns", async () => {
+    const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
+
+    await generate(boxEnv(binding));
+    await settled();
+
+    expect(mockRecord.mock.calls[0][2]).not.toHaveProperty("usage");
+  });
+
+  it("records a failed generation at cost 0 without a price lookup", async () => {
+    const binding = {
+      fetch: vi.fn().mockResolvedValue(new Response("boom", { status: 500 })),
+    };
+
+    await generate(boxEnv(binding));
+    await settled();
+
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 500,
+      costUsd: 0,
+    });
+    expect(mockGetModelPricing).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -221,16 +287,24 @@ describe("imageGenerationsV2", () => {
     errors.mockRestore();
   });
 
-  it("charges one request to the rate limiter without a token estimate", async () => {
+  it("estimates image tokens for the rate limiter", async () => {
     const binding = { fetch: vi.fn().mockResolvedValue(imageResponse()) };
 
-    await generate(boxEnv(binding));
+    await generate(boxEnv(binding), {
+      body: {
+        model: "local-box/z-image-turbo",
+        prompt: "a cat",
+        size: "1024x1024",
+        quality: "low",
+        n: 2,
+      },
+    });
 
     expect(mockCheckRateLimits).toHaveBeenCalledTimes(1);
     expect(mockCheckRateLimits.mock.calls[0][1]).toMatchObject({
       organizationId: "org_1",
       apiKeyId: "key_1",
-      estimatedTokens: 0,
+      estimatedTokens: 544,
     });
   });
 
@@ -534,6 +608,7 @@ describe("imageGenerationsV2 with a public provider", () => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", globalFetch);
     mockCheckRateLimits.mockResolvedValue({ allowed: true });
+    mockGetModelPricing.mockResolvedValue(IMAGE_PRICING);
     tenant.settings = {};
     pending.length = 0;
   });
@@ -569,6 +644,7 @@ describe("imageGenerationsV2 heartbeat", () => {
     vi.clearAllMocks();
     mockGetProviderConfig.mockResolvedValue(imageBox);
     mockCheckRateLimits.mockResolvedValue({ allowed: true });
+    mockGetModelPricing.mockResolvedValue(IMAGE_PRICING);
     tenant.settings = {};
     pending.length = 0;
   });
@@ -602,7 +678,10 @@ describe("imageGenerationsV2 heartbeat", () => {
     expect(text).toMatch(/^ {2,}\{"created":1/);
     expect(JSON.parse(text)).toEqual(IMAGE);
     await settled();
-    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 200 });
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 200,
+      costUsd: 0.2496,
+    });
   });
 
   it("answers normally when the upstream is fast", async () => {
@@ -628,7 +707,10 @@ describe("imageGenerationsV2 heartbeat", () => {
       type: "upstream_error",
       code: 500,
     });
-    expect(mockRecord.mock.calls[0][2]).toMatchObject({ statusCode: 500 });
+    expect(mockRecord.mock.calls[0][2]).toMatchObject({
+      statusCode: 500,
+      costUsd: 0,
+    });
   });
 
   it("reports 502 when the upstream throws after the commit", async () => {
