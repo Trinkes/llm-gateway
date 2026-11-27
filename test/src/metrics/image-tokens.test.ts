@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   IMAGE_QUALITY_TOKENS,
   imageOutputTokens,
+  isPriceableSize,
 } from "~/src/metrics/image-tokens";
 
 describe("imageOutputTokens", () => {
@@ -14,7 +15,11 @@ describe("imageOutputTokens", () => {
   });
 
   it("exposes the 1024x1024 counts", () => {
-    expect(IMAGE_QUALITY_TOKENS).toEqual({ low: 272, medium: 1056, high: 4160 });
+    expect(IMAGE_QUALITY_TOKENS).toEqual({
+      low: 272,
+      medium: 1056,
+      high: 4160,
+    });
   });
 
   it.each([
@@ -57,5 +62,26 @@ describe("imageOutputTokens", () => {
     [null, 272],
   ])("charges n=%s like the recorded image count", (n, expected) => {
     expect(imageOutputTokens({ quality: "low", n })).toBe(expected);
+  });
+});
+
+describe("isPriceableSize", () => {
+  it.each([undefined, "auto", "1024x1024", "1536x1024", "512x512"])(
+    "accepts %j",
+    (size) => {
+      expect(isPriceableSize(size)).toBe(true);
+    },
+  );
+
+  it.each([
+    "1024 X 1024",
+    "big",
+    42,
+    null,
+    "0x1024",
+    "",
+    "9".repeat(400) + "x1",
+  ])("refuses %j", (size) => {
+    expect(isPriceableSize(size)).toBe(false);
   });
 });

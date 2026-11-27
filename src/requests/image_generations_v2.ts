@@ -14,13 +14,14 @@ import {
   canonicalProviderName,
   isOpenAICompatibleProvider,
 } from "../llm/provider-registry";
-import { checkRateLimits } from "../llm/rate-limit";
+import { checkRateLimits, settleTokenUsage } from "../llm/rate-limit";
 import { resolveFetcher, type UpstreamFetcher } from "../llm/transport";
 import { V1OpenAICompatibleClient } from "../llm/v1-provider";
 import { computeCostUsd, getModelPricing } from "../metrics/cost-tracker";
-import { imageOutputTokens } from "../metrics/image-tokens";
+import { imageOutputTokens, isPriceableSize } from "../metrics/image-tokens";
 import { imageCount } from "../metrics/request-kinds";
 import { recordChatRequest, type ChatAttempt } from "../metrics/request-logger";
+import { maybeDisableAfterSpend } from "../metrics/spend-guard";
 import { ApiKeyAuth } from "../types";
 
 /** Wait this long for upstream headers before committing a 200 heartbeat. */
@@ -79,6 +80,10 @@ export async function imageGenerationsV2(
   if (!rawModel) return invalid("model is required");
   if (typeof body.prompt !== "string" || !body.prompt.trim()) {
     return invalid("prompt is required");
+  }
+  // [fork] W19: only a size we can price reaches the upstream.
+  if (!isPriceableSize(body.size)) {
+    return invalid("size must be WIDTHxHEIGHT or auto");
   }
   const slash = rawModel.indexOf("/");
   const boundProvider = apiKeyAuth.scopes.defaultProvider
@@ -224,6 +229,23 @@ export async function imageGenerationsV2(
           units: succeeded ? imageCount(body.n) : null,
           ...(errorMessage ? { errorMessage } : {}),
         });
+        if (!succeeded) return;
+        // As chat: charge the token bucket, then re-check spend caps.
+        await settleTokenUsage(env, {
+          organizationId,
+          settings,
+          actualTokens: imageTokens,
+        }).catch((err) => console.error("failed to settle image tokens", err));
+        if (costUsd > 0) {
+          await maybeDisableAfterSpend(
+            env,
+            organizationId,
+            apiKeyAuth.keyId,
+            apiKeyAuth.scopes,
+          ).catch((err) =>
+            console.error("failed to evaluate spend limits", err),
+          );
+        }
       })().catch((err) => console.error("failed to record image metrics", err)),
     );
   };
@@ -241,6 +263,8 @@ export async function imageGenerationsV2(
   // [fork] W18: a provider's model alias reaches the upstream under its own id.
   const upstreamBody = JSON.stringify({
     ...body,
+    // [fork] W19: the upstream renders the image count that was charged.
+    ...("n" in body ? { n: imageCount(body.n) } : {}),
     model: upstreamModelId(config.settings, model),
   });
   const upstream = client.imageGenerations(upstreamBody, {

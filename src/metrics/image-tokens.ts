@@ -33,11 +33,25 @@ export function imageOutputTokens(params: {
   return perImage * imageCount(params.n);
 }
 
+/**
+ * Whether a request's size can be priced as asked: missing, `auto`, or
+ * `WIDTHxHEIGHT` with both sides positive. Anything else is refused, so the
+ * upstream never renders a size other than the one priced.
+ */
+export function isPriceableSize(size: unknown): boolean {
+  if (size === undefined || size === "auto") return true;
+  return parsedPixels(size) !== null;
+}
+
 function sizePixels(size: unknown): number {
+  return parsedPixels(size) ?? BASE_PIXELS;
+}
+
+function parsedPixels(size: unknown): number | null {
   const match = typeof size === "string" ? SIZE_PATTERN.exec(size) : null;
-  if (!match) return BASE_PIXELS;
+  if (!match) return null;
   const pixels = Number(match[1]) * Number(match[2]);
-  return pixels > 0 ? pixels : BASE_PIXELS;
+  return Number.isFinite(pixels) && pixels > 0 ? pixels : null;
 }
 
 function quality(value: unknown): ImageQuality {
