@@ -78,7 +78,11 @@ export function LiveHistoryView({
     <div className="space-y-6">
       {header(historySubtitle(history.bucketS))}
 
-      <LiveModelsCard models={history.models} domain={domain} />
+      <LiveModelsCard
+        models={history.models}
+        domain={domain}
+        bucketS={history.bucketS}
+      />
 
       <Card
         title="Aggregate throughput"

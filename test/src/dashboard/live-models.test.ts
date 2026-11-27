@@ -7,6 +7,7 @@ import {
   modelColor,
   modelSeriesKey,
   modelUsage,
+  modelsWindowS,
   requestsPerMin,
 } from "../../../dashboard/src/lib/liveModels";
 import { formatUsage } from "../../../dashboard/src/lib/requestKinds";
@@ -65,6 +66,13 @@ describe("modelColor", () => {
     const keys = ["b|chat", "a|chat"];
     expect(modelColor("a|chat", keys)).toBe(MODEL_COLORS[0]);
     expect(modelColor("b|chat", [...keys].reverse())).toBe(MODEL_COLORS[1]);
+  });
+});
+
+describe("modelsWindowS", () => {
+  it("is the span the busy series covers, not the requested range", () => {
+    expect(modelsWindowS([model()], 600)).toBe(1200);
+    expect(modelsWindowS([], 600)).toBe(0);
   });
 });
 

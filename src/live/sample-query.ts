@@ -5,6 +5,7 @@ import { modelActivity, type ModelActivity } from "./model-activity";
 import {
   modelActivityRollupsStatement,
   modelsFromRollups,
+  rolledUpTo,
   type ModelActivityRollup,
 } from "./model-activity-store";
 import {
@@ -278,13 +279,18 @@ export async function queryHistory(
     const current = toVpcProviders(env, results[next + 1].results).map(
       (p) => p.provider,
     );
-    models = modelsFromRollups(
-      results[next + 2].results as unknown as ModelActivityRollup[],
-      current,
-      from,
+    const throughputRows = results[next].results as unknown as {
+      ts: number;
+    }[];
+    const modelRows = results[next + 2]
+      .results as unknown as ModelActivityRollup[];
+    // Throughput rollups are written dense (idle = zeros), so they say how far
+    // the cron got even when no model had traffic.
+    const coveredTo = Math.min(
       to,
-      bucketS,
+      rolledUpTo([...throughputRows, ...modelRows], from),
     );
+    models = modelsFromRollups(modelRows, current, from, coveredTo, bucketS);
   }
   return {
     from,

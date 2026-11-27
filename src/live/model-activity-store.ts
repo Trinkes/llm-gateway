@@ -77,6 +77,11 @@ export function rollupModelActivity(
   });
 }
 
+/** End of the rolled-up span: the newest bucket in `rows` plus 600 s, else `from`. */
+export function rolledUpTo(rows: { ts: number }[], from: number): number {
+  return rows.reduce((end, r) => Math.max(end, r.ts + ROLLUP_S), from);
+}
+
 /** `INSERT OR REPLACE` statements for `rollups`, for the caller's write batch. */
 export function modelActivityWrites(
   env: Env,
@@ -127,23 +132,26 @@ export function modelActivityRollupsStatement(
 }
 
 /**
- * Stored rollups grouped into `bucketS` buckets of `[from, to)` per (provider,
- * method): busy is the mean over the bucket (missing rollups count as idle),
- * busyMax the peak 10 s value, counts and sums added. Current `providers`
- * without rollups get an idle entry.
+ * Stored rollups grouped into `bucketS` buckets per (provider, method), from
+ * `from` floored to `bucketS` (like the throughput rollups) up to `coveredTo`,
+ * the end of what the cron has rolled up, so the series never shows a
+ * not-yet-rolled-up tail as idle. Busy is the mean over the bucket (missing
+ * rollups count as idle), busyMax the peak 10 s value, counts and sums added.
+ * Current `providers` without rollups get an idle entry.
  */
 export function modelsFromRollups(
   rollups: ModelActivityRollup[],
   providers: string[],
   from: number,
-  to: number,
+  coveredTo: number,
   bucketS: number,
 ): ModelActivity[] {
-  const n = Math.ceil((to - from) / bucketS);
+  const start = Math.floor(from / bucketS) * bucketS;
+  const n = Math.max(0, Math.ceil((coveredTo - start) / bucketS));
   const perBucket = bucketS / ROLLUP_S;
   const zeros = (): BusyPoint[] =>
     Array.from({ length: n }, (_, i) => ({
-      ts: from + i * bucketS,
+      ts: start + i * bucketS,
       busy: 0,
       busyMax: 0,
     }));
@@ -166,7 +174,7 @@ export function modelsFromRollups(
       };
       groups.set(key, g);
     }
-    const point = g.busy[Math.floor((r.ts - from) / bucketS)];
+    const point = g.busy[Math.floor((r.ts - start) / bucketS)];
     if (point) {
       point.busy += r.busy / perBucket;
       point.busyMax = Math.max(point.busyMax ?? 0, r.busy_max);

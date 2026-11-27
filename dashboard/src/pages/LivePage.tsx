@@ -213,7 +213,7 @@ export function LivePage() {
         </div>
       </div>
 
-      <LiveModelsCard models={snapshot.models} domain={domain} />
+      <LiveModelsCard models={snapshot.models} domain={domain} bucketS={10} />
 
       <Card
         title="Aggregate throughput"

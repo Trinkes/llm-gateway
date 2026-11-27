@@ -67,3 +67,11 @@ export function fmtRate(perMin: number): string {
   if (perMin < 0.05) return "<0.1";
   return perMin.toFixed(1);
 }
+
+/** Seconds the models' busy series covers (stored ranges stop where the cron got to). */
+export function modelsWindowS(
+  models: ModelActivity[],
+  bucketS: number,
+): number {
+  return (models[0]?.busy.length ?? 0) * bucketS;
+}

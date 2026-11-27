@@ -229,6 +229,29 @@ describe("queryHistory", () => {
     ]);
   });
 
+  /** Dense throughput rollups up to `end`, as the cron writes them (idle = zeros). */
+  async function rolledUpTo(end: number, org = ORG) {
+    for (let ts = 0; ts < end; ts += 600) {
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO throughput_rollups
+           (organization_id, ts, decode_tps, decode_tps_max, prefill_tps, prefill_tps_max, requests)
+         VALUES (?, ?, 0, 0, 0, 0, 0)`,
+      )
+        .bind(org, ts)
+        .run();
+    }
+  }
+
+  it("models on a long range stop at the newest rollup, aligned to the bucket", async () => {
+    await rolledUpTo(3600);
+    const h = await queryHistory(e, ORG, 100, 100 + 7 * 86400);
+    const [idle] = h.models;
+    expect(idle.busy[0].ts).toBe(0);
+    expect(idle.busy.every((p) => p.ts % h.bucketS === 0)).toBe(true);
+    expect(idle.busy.at(-1)!.ts).toBeLessThan(3600);
+    expect(idle.busy).toHaveLength(Math.ceil(3600 / h.bucketS));
+  });
+
   it("models on a long range come from rollups, removed providers included", async () => {
     const put = (
       org: string,
@@ -257,8 +280,10 @@ describe("queryHistory", () => {
     await put(ORG, 0, 0.5, 1, 2);
     await put(ORG, 600, 0.25, 0.5, 0);
     await put("org_other", 0, 9, 9, 9);
+    await rolledUpTo(2400);
     const h = await queryHistory(e, ORG, 0, 7 * 86400);
-    const buckets = Math.ceil((7 * 86400) / h.bucketS);
+    // The series stops where the cron has rolled up to, not at `to`.
+    const buckets = 2400 / h.bucketS;
     expect(h.models.map((m) => m.label)).toEqual(["gone · Image", "box"]);
     const [gone, idle] = h.models;
     expect(gone).toMatchObject({
