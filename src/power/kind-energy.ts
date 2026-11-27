@@ -144,14 +144,19 @@ export function kindEnergy(shares: KindShare[]): KindEnergy[] {
     );
 }
 
+/** The token kinds that produced output (embeddings excluded). */
+function outputKinds(shares: KindShare[]): KindShare[] {
+  return shares.filter(
+    (k) => k.output > 0 && kindInfo(k.kind).unit === "tokens",
+  );
+}
+
 /**
  * Electricity of the token kinds that produced output (embeddings excluded):
  * the base of the per-1M-output figure. Null without a price or such kinds.
  */
 export function outputKindsUsd(shares: KindShare[]): number | null {
-  const kinds = shares.filter(
-    (k) => k.output > 0 && kindInfo(k.kind).unit === "tokens",
-  );
+  const kinds = outputKinds(shares);
   if (kinds.length === 0) return null;
   let usd = 0;
   for (const k of kinds) {
@@ -159,4 +164,9 @@ export function outputKindsUsd(shares: KindShare[]): number | null {
     usd += k.electricityUsd;
   }
   return usd;
+}
+
+/** Output tokens of the same kinds as `outputKindsUsd`: its denominator. */
+export function outputKindsTokens(shares: KindShare[]): number {
+  return outputKinds(shares).reduce((sum, k) => sum + k.output, 0);
 }

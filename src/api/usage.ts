@@ -35,6 +35,7 @@ usageRouter.get("/costs", async (c) => {
   const summary = await spendForRange(c.env, orgId, {
     start,
     end,
+    // [fork] W17: per-kind split
     withKinds: true,
   });
   return c.json({ days, summary });

@@ -97,6 +97,7 @@ function CloudCard({
           tone={saving === null ? "default" : saving >= 0 ? "green" : "red"}
         />
       </div>
+      {/* [fork] W17: per-1M basis is the token kinds only */}
       <p className="mt-4 text-sm text-gray-600">
         Per 1M output tokens (the token kinds' share of the box's energy): box{" "}
         <strong>{fmtUsdPrecise(totals.electricityPer1mOutputUsd)}</strong> vs
@@ -342,6 +343,7 @@ export function PowerPage() {
 
           <CloudCard totals={t} rates={r.cloudRates} />
 
+          {/* [fork] W17 */}
           <PowerKindsCard kinds={t.kinds ?? []} />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

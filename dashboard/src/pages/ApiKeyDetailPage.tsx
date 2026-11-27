@@ -202,6 +202,7 @@ export function ApiKeyDetailPage() {
         />
       </div>
 
+      {/* [fork] W17: per-kind usage */}
       <KindUsageCard
         kinds={s.byKind ?? []}
         subtitle="This key's traffic per request kind, each in its own unit."
@@ -326,6 +327,7 @@ export function ApiKeyDetailPage() {
                 <tr className="border-b border-gray-100 text-xs uppercase tracking-wide text-gray-400">
                   <th className="px-5 py-3 font-medium">Provider</th>
                   <th className="px-5 py-3 font-medium">Model</th>
+                  {/* [fork] W17 */}
                   <th className="px-5 py-3 font-medium">Kind</th>
                   <th className="px-5 py-3 text-right font-medium">Requests</th>
                   <th className="px-5 py-3 text-right font-medium">Errors</th>
@@ -338,6 +340,7 @@ export function ApiKeyDetailPage() {
                     key={`${m.provider}:${m.model}:${m.kind}`}
                     tabIndex={0}
                     title="Show these requests"
+                    // [fork] W17: the kind rides along in the explorer link
                     onClick={() =>
                       navigate(
                         `${explorerBase}&provider=${encodeURIComponent(m.provider)}&model=${encodeURIComponent(m.model)}&kind=${encodeURIComponent(m.kind)}`,
@@ -347,7 +350,8 @@ export function ApiKeyDetailPage() {
                   >
                     <td className="px-5 py-3 font-medium">{m.provider}</td>
                     <td className="px-5 py-3 text-gray-600">{m.model}</td>
-                    <td className="px-5 py-3 text-gray-600">{m.kind}</td>
+                    {/* [fork] W17 */}
+                    <td className="px-5 py-3 text-gray-600">{m.label}</td>
                     <td className="px-5 py-3 text-right">
                       {fmtCount(m.requests)}
                     </td>
@@ -390,6 +394,7 @@ export function ApiKeyDetailPage() {
                 <tr className="border-b border-gray-100 text-xs uppercase tracking-wide text-gray-400">
                   <th className="px-5 py-3 font-medium">Time</th>
                   <th className="px-5 py-3 font-medium">Model</th>
+                  {/* [fork] W17 */}
                   <th className="px-5 py-3 font-medium">Kind</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium">Latency</th>
@@ -415,6 +420,7 @@ export function ApiKeyDetailPage() {
                     <td className="px-5 py-3 text-gray-600">
                       {r.model || "—"}
                     </td>
+                    {/* [fork] W17 */}
                     <td className="px-5 py-3 text-gray-600">{r.kind_label}</td>
                     <td className="px-5 py-3">
                       <RequestStatusBadge

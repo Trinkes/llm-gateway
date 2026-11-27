@@ -321,15 +321,38 @@ describe("dailyCosts", () => {
         cost_usd: expect.closeTo(0.85),
         requests: 3,
         kinds: [
-          { kind: "chat", requests: 2, units: 0, costUsd: 0.75 },
-          { kind: "image", requests: 1, units: 2, costUsd: 0.1 },
+          {
+            kind: "chat",
+            unit: "tokens",
+            label: "Chat",
+            requests: 2,
+            units: 0,
+            costUsd: 0.75,
+          },
+          {
+            kind: "image",
+            unit: "images",
+            label: "Image",
+            requests: 1,
+            units: 2,
+            costUsd: 0.1,
+          },
         ],
       },
       {
         day: day2 - 3600,
         cost_usd: 0,
         requests: 1,
-        kinds: [{ kind: "audio", requests: 1, units: 0, costUsd: 0 }],
+        kinds: [
+          {
+            kind: "audio",
+            unit: null,
+            label: "audio",
+            requests: 1,
+            units: 0,
+            costUsd: 0,
+          },
+        ],
       },
     ]);
   });

@@ -67,12 +67,11 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
       `Provider '${provider}' does not support OpenAI embeddings`,
     );
   }
-  const resolvedModel = model;
   const modelError = assertModelAllowed(
     settings,
     apiKeyAuth.scopes,
     provider,
-    resolvedModel,
+    model,
   );
   if (modelError) return errorBody(modelError.code, modelError.message);
 
@@ -96,7 +95,7 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
     apiKeyId: apiKeyAuth.keyId,
     startedAt: Date.now(),
     provider,
-    model: resolvedModel,
+    model: model,
     method: "embedding",
   };
   // [fork] W17
@@ -108,10 +107,9 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
     );
   let upstream: Response;
   try {
-    upstream = await client.embeddings(
-      JSON.stringify({ ...body, model: resolvedModel }),
-      { signal: request.signal },
-    );
+    upstream = await client.embeddings(JSON.stringify({ ...body, model }), {
+      signal: request.signal,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     record({ statusCode: 502, errorMessage: message });
@@ -123,6 +121,8 @@ export async function embeddingsV2(input: EmbeddingsInput): Promise<Response> {
     record({ statusCode: upstream.status, errorMessage: message });
     return errorBody("upstream_error", message);
   }
+  // Buffered (not streamed): the usage is read from the body to record it;
+  // embeddings replies are small JSON.
   const text = await upstream.text();
   record({
     statusCode: upstream.status,

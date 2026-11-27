@@ -46,7 +46,7 @@ export interface KindEnergy {
   electricityUsd: number | null;
   perUnitUsd: number | null;
   /** What perUnitUsd is priced per ("1M output tokens", "image", ...); null with it. */
-  perUnit: string | null;
+  perUnit: "1M output tokens" | "1M input tokens" | "image" | "request" | null;
 }
 
 export interface PowerTotals {

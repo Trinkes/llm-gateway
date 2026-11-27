@@ -4,7 +4,6 @@ import {
   metricsBufferName,
   type MetricsBuffer,
 } from "../durable/metrics-buffer";
-import { kindInfo, type KindInfo } from "../metrics/request-kinds";
 import {
   latestRequestStatement,
   withKindInfo,
@@ -93,8 +92,6 @@ export interface LiveSnapshot {
   inference: InferenceSnapshot | null;
   host: HostSnapshot | null;
   lastRequest: RequestLogRow | null;
-  /** [fork] W17: kind, unit and label of `lastRequest`, so it renders by unit. */
-  lastRequestKind: KindInfo | null;
   /** Request throughput of the last 10 minutes, one point per 10 s (idle = 0). */
   throughput: ThroughputPoint[];
 }
@@ -255,7 +252,6 @@ async function readRequestLog(
   nowMs: number,
 ): Promise<{
   lastRequest: RequestLogRow | null;
-  lastRequestKind: KindInfo | null;
   throughput: ThroughputPoint[];
 }> {
   const to =
@@ -278,7 +274,6 @@ async function readRequestLog(
   const lastRequest = raw ? withKindInfo(raw) : null;
   return {
     lastRequest,
-    lastRequestKind: lastRequest ? kindInfo(lastRequest.method) : null,
     throughput: rows
       ? spreadThroughput(
           mergeThroughputRows(

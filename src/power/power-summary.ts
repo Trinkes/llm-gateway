@@ -7,6 +7,7 @@ import {
   addKindBusy,
   attributeEnergy,
   kindEnergy,
+  outputKindsTokens,
   outputKindsUsd,
   type KindBusy,
   type KindEnergy,
@@ -200,7 +201,7 @@ function totalsOf(
         : cloudUsd - electricityUsd,
     electricityPer1mOutputUsd: per1mOutput(
       outputKindsUsd(shares),
-      x.tokens.output,
+      outputKindsTokens(shares),
     ),
     cloudPer1mOutputUsd: per1mOutput(cloudUsd, x.tokens.output),
     kinds: kindEnergy(shares),

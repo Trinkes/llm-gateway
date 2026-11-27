@@ -139,6 +139,8 @@ describe("keyDetailUsage", () => {
         provider: "local-m5",
         model: "qwen",
         kind: "chat",
+        unit: "tokens",
+        label: "Chat",
         requests: 2,
         errors: 1,
         costUsd: expect.closeTo(0.03),
@@ -147,6 +149,8 @@ describe("keyDetailUsage", () => {
         provider: "openai",
         model: "gpt",
         kind: "chat",
+        unit: "tokens",
+        label: "Chat",
         requests: 1,
         errors: 0,
         costUsd: 0.01,
@@ -208,10 +212,12 @@ describe("keyDetailUsage", () => {
       [BASE, 3, { chat: 1, image: 2 }],
       [BASE + 3600, 1, { audio: 1 }],
     ]);
-    expect(usage.models.map((m) => [m.kind, m.requests])).toEqual([
-      ["image", 2],
-      ["audio", 1],
-      ["chat", 1],
+    expect(
+      usage.models.map((m) => [m.kind, m.requests, m.unit, m.label]),
+    ).toEqual([
+      ["image", 2, "images", "Image"],
+      ["audio", 1, null, "audio"],
+      ["chat", 1, "tokens", "Chat"],
     ]);
   });
 

@@ -1,7 +1,7 @@
 import type { TenantSettings } from "../db/tenant";
 import { nowSeconds } from "../utils/crypto";
 import { kindUsageStatement, toKindUsage, type KindUsage } from "./kind-usage";
-import { TOKEN_ROWS_SQL } from "./request-kinds";
+import { kindInfo, TOKEN_ROWS_SQL, type KindUnit } from "./request-kinds";
 
 export interface ModelPricing {
   provider: string;
@@ -123,6 +123,7 @@ interface SpendRow {
   tokens_cache_write: number | null;
   response_cache_hits: number | null;
   prompt_cache_hits: number | null;
+  token_requests: number | null;
 }
 
 /** Aggregated spend for a tenant over [start, end); tenant-scoped by definition. */
@@ -169,7 +170,8 @@ export async function spendForRange(
        SUM(tokens_cache_read) AS tokens_cache_read,
        SUM(tokens_cache_write) AS tokens_cache_write,
        SUM(cache_hit) AS response_cache_hits,
-       COUNT(CASE WHEN tokens_cache_read > 0 THEN 1 END) AS prompt_cache_hits
+       COUNT(CASE WHEN tokens_cache_read > 0 THEN 1 END) AS prompt_cache_hits,
+       COUNT(CASE WHEN ${TOKEN_ROWS_SQL()} THEN 1 END) AS token_requests
      FROM request_metrics WHERE ${whereSql}`,
   ).bind(...params);
   let row: SpendRow | null;
@@ -188,6 +190,8 @@ export async function spendForRange(
   const requests = row?.requests ?? 0;
   const errors = row?.errors ?? 0;
   const promptCacheHits = row?.prompt_cache_hits ?? 0;
+  // [fork] W17: the hit rate is over token rows only (images/audio never hit).
+  const tokenRequests = row?.token_requests ?? 0;
   return {
     start,
     end,
@@ -202,7 +206,7 @@ export async function spendForRange(
     tokensCacheWrite: row?.tokens_cache_write ?? 0,
     responseCacheHits: row?.response_cache_hits ?? 0,
     promptCacheHits,
-    promptCacheHitRate: requests > 0 ? promptCacheHits / requests : 0,
+    promptCacheHitRate: tokenRequests > 0 ? promptCacheHits / tokenRequests : 0,
     byKind,
   };
 }
@@ -292,6 +296,8 @@ export interface DailyCostRow {
 /** [fork] W17 */
 export interface DailyKindRow {
   kind: string;
+  unit: KindUnit;
+  label: string;
   requests: number;
   units: number;
   costUsd: number;
@@ -332,8 +338,11 @@ export async function dailyCosts(
     const costUsd = r.cost_usd ?? 0;
     day.cost_usd += costUsd;
     day.requests += r.requests;
+    const { unit, label } = kindInfo(r.kind);
     day.kinds.push({
       kind: r.kind,
+      unit,
+      label,
       requests: r.requests,
       units: r.units ?? 0,
       costUsd,

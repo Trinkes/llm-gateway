@@ -1,4 +1,5 @@
 import { kindUsageStatement, toKindUsage, type KindUsage } from "./kind-usage";
+import { kindInfo, type KindUnit } from "./request-kinds";
 
 /** Windows up to this long are bucketed by hour, longer ones by day. */
 const HOURLY_MAX_SECONDS = 48 * 3600;
@@ -20,6 +21,9 @@ export interface KeyModelUsage {
   model: string;
   /** [fork] W17 */
   kind: string;
+  /** [fork] W17: from the kind registry. */
+  unit: KindUnit;
+  label: string;
   requests: number;
   errors: number;
   costUsd: number;
@@ -143,7 +147,12 @@ export async function keyDetailUsage(
         Omit<KeySeriesPoint, "kinds"> & { kind: string }
       >,
     ),
-    models: models.results as unknown as KeyModelUsage[],
+    models: (
+      models.results as unknown as Array<Omit<KeyModelUsage, "unit" | "label">>
+    ).map((m) => {
+      const { unit, label } = kindInfo(m.kind);
+      return { ...m, unit, label };
+    }),
     lifetimeCostUsd: (lifetime.results[0] as { cost_usd: number }).cost_usd,
   };
 }

@@ -98,7 +98,7 @@ export function RequestsPage() {
       label: p,
     })),
   );
-  // Facets are per provider + model + kind: sum a model's kinds into one option.
+  // [fork] W17: facets are per provider + model + kind: sum a model's kinds into one option.
   const modelRequests = new Map<string, number>();
   for (const f of facetRows) {
     if (state.filters.provider && f.provider !== state.filters.provider)
@@ -187,6 +187,7 @@ export function RequestsPage() {
               options={modelOptions}
             />
           </div>
+          {/* [fork] W17 */}
           <div>
             <Label>Kind</Label>
             <Select
@@ -259,6 +260,7 @@ export function RequestsPage() {
                   <th className="px-5 py-3 font-medium">Caller</th>
                   <th className="px-5 py-3 font-medium">Provider</th>
                   <th className="px-5 py-3 font-medium">Model</th>
+                  {/* [fork] W17 */}
                   <th className="px-5 py-3 font-medium">Kind</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium">Cache</th>
@@ -303,6 +305,7 @@ export function RequestsPage() {
                       <td className="px-5 py-3 text-gray-600">
                         {r.model || "—"}
                       </td>
+                      {/* [fork] W17 */}
                       <td className="px-5 py-3 text-gray-600">
                         {r.kind_label}
                       </td>

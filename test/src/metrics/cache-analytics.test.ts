@@ -107,6 +107,45 @@ describe("cache analytics", () => {
     expect(summary.responseCacheHits).toBe(0);
   });
 
+  it("computes the prompt-cache hit rate over token rows only", async () => {
+    await seed({ tokensInput: 700, tokensCacheRead: 2000 }); // chat hit
+    await seed({ tokensInput: 50 }); // chat miss
+    // image and audio rows carry no token counts
+    for (const kind of ["image", "audio"]) {
+      await env.DB.prepare(
+        `INSERT INTO request_metrics
+           (id, organization_id, timestamp, provider, model, method,
+            status_code, latency_ms, cache_hit)
+         VALUES (?, ?, ?, 'local', 'm', ?, 200, 100, 0)`,
+      )
+        .bind(`metric_${uniq()}`, ORG, NOW - 30, kind)
+        .run();
+    }
+    const summary = await spendForRange(env as never, ORG, {
+      start: START,
+      end: END,
+    });
+    expect(summary.requests).toBe(4);
+    expect(summary.promptCacheHits).toBe(1);
+    expect(summary.promptCacheHitRate).toBeCloseTo(1 / 2, 6);
+  });
+
+  it("has a zero hit rate when no row carries tokens", async () => {
+    await env.DB.prepare(
+      `INSERT INTO request_metrics
+         (id, organization_id, timestamp, provider, model, method,
+          status_code, latency_ms, cache_hit)
+       VALUES (?, ?, ?, 'local', 'm', 'image', 200, 100, 0)`,
+    )
+      .bind(`metric_${uniq()}`, ORG, NOW - 30)
+      .run();
+    const summary = await spendForRange(env as never, ORG, {
+      start: START,
+      end: END,
+    });
+    expect(summary.promptCacheHitRate).toBe(0);
+  });
+
   it("counts proxy response-cache hits separately from prompt caching", async () => {
     await seed({ tokensInput: 10, cacheHit: 1 });
     const summary = await spendForRange(env as never, ORG, {

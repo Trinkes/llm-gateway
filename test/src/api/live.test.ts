@@ -245,27 +245,21 @@ describe("GET /api/live", () => {
     const snap = await lastOf("org_live_image");
     expect(snap.lastRequest?.units).toBe(2);
     expect(snap.lastRequest?.method).toBe("image");
-    expect(snap.lastRequestKind).toEqual({
-      kind: "image",
-      unit: "images",
-      label: "Image",
-    });
+    expect(snap.lastRequest?.kind_unit).toBe("images");
+    expect(snap.lastRequest?.kind_label).toBe("Image");
   });
 
   it("an unknown last kind has no unit and labels itself", async () => {
     await insertKindRow("org_live_audio", "audio", null);
     const snap = await lastOf("org_live_audio");
-    expect(snap.lastRequestKind).toEqual({
-      kind: "audio",
-      unit: null,
-      label: "audio",
-    });
+    expect(snap.lastRequest?.kind_unit).toBeNull();
+    expect(snap.lastRequest?.kind_label).toBe("audio");
   });
 
   it("a chat last request has the tokens unit; no request has no kind", async () => {
     const { body } = await get({});
-    expect(body.snapshot.lastRequestKind?.unit).toBe("tokens");
-    expect((await lastOf("org_empty")).lastRequestKind).toBeNull();
+    expect(body.snapshot.lastRequest?.kind_unit).toBe("tokens");
+    expect((await lastOf("org_empty")).lastRequest).toBeNull();
   });
 
   it("requires a session", async () => {

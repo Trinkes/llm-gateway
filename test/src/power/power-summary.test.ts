@@ -274,7 +274,14 @@ describe("summarize", () => {
 
   it("no output tokens gives no per-1M figures", () => {
     const { totals } = summarize(
-      [{ ...raw[0], tokens: noTokens, cloudUsd: 0 }],
+      [
+        {
+          ...raw[0],
+          tokens: noTokens,
+          cloudUsd: 0,
+          kinds: [{ ...chatBusy, output: 0 }],
+        },
+      ],
       0,
       10_000,
       settings,
@@ -369,6 +376,30 @@ describe("summarize kinds", () => {
     expect(periods[0].electricityPer1mOutputUsd).toBeCloseTo(0.003);
     expect(totals.electricityPer1mOutputUsd).toBeCloseTo(0.003);
     expect(totals.kinds).toEqual(k);
+  });
+
+  it("per-1M output counts only token kinds' output, numerator and denominator alike", () => {
+    // audio (not a token kind) also reports output tokens in the raw sums
+    const withAudioOutput: PeriodRaw[] = [
+      {
+        ...mixed[0],
+        tokens: { ...mixed[0].tokens, output: 1_500_000 },
+        kinds: [
+          { ...audioBusy, output: 500_000 },
+          imageBusy,
+          { ...chatBusy, busySeconds: 50 },
+        ],
+      },
+    ];
+    const { totals } = summarize(
+      withAudioOutput,
+      0,
+      10_000,
+      settings,
+      overhead10,
+    );
+    // chat's $0.003 over chat's 1M output, not over 1.5M
+    expect(totals.electricityPer1mOutputUsd).toBeCloseTo(0.003);
   });
 
   it("a chat-only period keeps the whole-energy per-1M figure", () => {
