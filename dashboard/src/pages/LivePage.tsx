@@ -5,6 +5,7 @@
 // read the stored history (GET /api/live/history) through LiveHistoryView.
 import { LiveGauge } from "../components/LiveGauge";
 import { LiveHistoryView } from "../components/LiveHistoryView";
+import { LiveModelsCard } from "../components/LiveModelsCard";
 import { LiveTempChart } from "../components/LiveTempChart";
 import {
   DECODE_COLOR,
@@ -212,6 +213,8 @@ export function LivePage() {
         </div>
       </div>
 
+      <LiveModelsCard models={snapshot.models} domain={domain} bucketS={10} />
+
       <Card
         title="Aggregate throughput"
         subtitle={
@@ -248,6 +251,12 @@ export function LivePage() {
         )}
       </Card>
 
+      {/* [fork] W22: these read one inference server's own counters, not the box. */}
+      {inf && (
+        <p className="-mb-3 text-xs text-gray-500">
+          From {inf.binding} counters
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Active requests"

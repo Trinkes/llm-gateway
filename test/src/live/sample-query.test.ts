@@ -91,6 +91,7 @@ beforeAll(async () => {
     "inference_samples",
     "host_samples",
     "throughput_rollups",
+    "model_activity_rollups",
   ]);
 });
 
@@ -99,6 +100,7 @@ beforeEach(async () => {
     "inference_samples",
     "host_samples",
     "throughput_rollups",
+    "model_activity_rollups",
     "request_metrics",
     "provider_configs",
   ]) {
@@ -210,6 +212,93 @@ describe("queryHistory", () => {
       prefillTpsMax: null,
     });
     expect(h.throughput[6].decodeTps).toBe(0);
+  });
+
+  it("models on a short range come from the request log", async () => {
+    await request("r1", 3060, 60_000);
+    await request("r2", 3060, 60_000, "openai"); // not a vpc provider
+    const h = await queryHistory(e, ORG, 3000, 3100);
+    expect(h.models).toHaveLength(1);
+    expect(h.models[0]).toMatchObject({
+      provider: "box",
+      kind: "chat",
+      requests: 1,
+    });
+    expect(h.models[0].busy.map((p) => p.busy)).toEqual([
+      1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
+    ]);
+  });
+
+  /** Dense throughput rollups up to `end`, as the cron writes them (idle = zeros). */
+  async function rolledUpTo(end: number, org = ORG) {
+    for (let ts = 0; ts < end; ts += 600) {
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO throughput_rollups
+           (organization_id, ts, decode_tps, decode_tps_max, prefill_tps, prefill_tps_max, requests)
+         VALUES (?, ?, 0, 0, 0, 0, 0)`,
+      )
+        .bind(org, ts)
+        .run();
+    }
+  }
+
+  it("models on a long range stop at the newest rollup, aligned to the bucket", async () => {
+    await rolledUpTo(3600);
+    const h = await queryHistory(e, ORG, 100, 100 + 7 * 86400);
+    const [idle] = h.models;
+    expect(idle.busy[0].ts).toBe(0);
+    expect(idle.busy.every((p) => p.ts % h.bucketS === 0)).toBe(true);
+    expect(idle.busy.at(-1)!.ts).toBeLessThan(3600);
+    expect(idle.busy).toHaveLength(Math.ceil(3600 / h.bucketS));
+  });
+
+  it("models on a long range come from rollups, removed providers included", async () => {
+    const put = (
+      org: string,
+      ts: number,
+      busy: number,
+      busyMax: number,
+      requests: number,
+    ) =>
+      env.DB.prepare(
+        `INSERT INTO model_activity_rollups
+           (organization_id, provider, method, ts, busy, busy_max, requests,
+            errors, latency_ms_sum, tokens_input, tokens_output, units)
+         VALUES (?, 'gone', 'image', ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+      )
+        .bind(
+          org,
+          ts,
+          busy,
+          busyMax,
+          requests,
+          requests > 0 ? 1 : 0,
+          requests > 0 ? 3000 : 0,
+          requests > 0 ? 3 : 0,
+        )
+        .run();
+    await put(ORG, 0, 0.5, 1, 2);
+    await put(ORG, 600, 0.25, 0.5, 0);
+    await put("org_other", 0, 9, 9, 9);
+    await rolledUpTo(2400);
+    const h = await queryHistory(e, ORG, 0, 7 * 86400);
+    // The series stops where the cron has rolled up to, not at `to`.
+    const buckets = 2400 / h.bucketS;
+    expect(h.models.map((m) => m.label)).toEqual(["gone · Image", "box"]);
+    const [gone, idle] = h.models;
+    expect(gone).toMatchObject({
+      requests: 2,
+      errors: 1,
+      latencyAvgMs: 3000,
+      units: 3,
+      unit: "images",
+    });
+    expect(gone.busy).toHaveLength(buckets);
+    expect(gone.busy[0].busy).toBeCloseTo(0.75 / (h.bucketS / 600));
+    expect(gone.busy[0].busyMax).toBe(1);
+    expect(gone.busy[1]).toMatchObject({ busy: 0, busyMax: 0 });
+    expect(idle).toMatchObject({ provider: "box", kind: null, requests: 0 });
+    expect(idle.busy).toHaveLength(buckets);
   });
 
   it("aligns an unaligned from to the bucket and still counts all tokens", async () => {

@@ -1,7 +1,12 @@
 // [fork] W12: which providers reach the box, by organization.
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { providerVpcBinding, vpcProviders } from "~/src/live/provider-binding";
+import {
+  providerVpcBinding,
+  toVpcProviders,
+  vpcProviders,
+  vpcProvidersStatement,
+} from "~/src/live/provider-binding";
 
 const e = { ...env, VPC_BINDINGS: "HALOGEN:org_a" } as unknown as Env;
 
@@ -38,6 +43,30 @@ describe("vpcProviders", () => {
   it("can be limited to one organization", async () => {
     expect(await vpcProviders(e, "org_b")).toEqual([]);
     expect(await vpcProviders(e, "org_a")).toHaveLength(1);
+  });
+});
+
+describe("vpcProvidersStatement + toVpcProviders", () => {
+  it("drops rows the allowlist does not allow for that org", () => {
+    const rows = [
+      { organization_id: "org_a", provider: "box", binding: "HALOGEN" },
+      { organization_id: "org_b", provider: "box", binding: "HALOGEN" },
+      { organization_id: "org_a", provider: "nobinding", binding: null },
+    ];
+    expect(toVpcProviders(e, rows)).toEqual([
+      { organizationId: "org_a", provider: "box", binding: "HALOGEN" },
+    ]);
+  });
+
+  it("matches vpcProviders when run in a batch", async () => {
+    const [all, one] = await env.DB.batch([
+      vpcProvidersStatement(e),
+      vpcProvidersStatement(e, "org_a"),
+    ]);
+    expect(toVpcProviders(e, all.results)).toEqual(await vpcProviders(e));
+    expect(toVpcProviders(e, one.results)).toEqual(
+      await vpcProviders(e, "org_a"),
+    );
   });
 });
 

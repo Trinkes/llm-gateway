@@ -9,6 +9,7 @@ import {
   withKindInfo,
   type RequestLogRow,
 } from "../metrics/request-log";
+import { modelActivity, type ModelActivity } from "./model-activity";
 import {
   parsePrometheus,
   promSum,
@@ -94,6 +95,8 @@ export interface LiveSnapshot {
   lastRequest: RequestLogRow | null;
   /** Request throughput of the last 10 minutes, one point per 10 s (idle = 0). */
   throughput: ThroughputPoint[];
+  /** [fork] W22: per-model busy time and stats over the same 10 minutes. */
+  models: ModelActivity[];
 }
 
 const THROUGHPUT_WINDOW_S = 600;
@@ -253,6 +256,7 @@ async function readRequestLog(
 ): Promise<{
   lastRequest: RequestLogRow | null;
   throughput: ThroughputPoint[];
+  models: ModelActivity[];
 }> {
   const to =
     (Math.floor(nowMs / 1000 / THROUGHPUT_BUCKET_S) + 1) * THROUGHPUT_BUCKET_S;
@@ -272,19 +276,18 @@ async function readRequestLog(
   const raw = last.results[0] as unknown as
     Omit<RequestLogRow, "kind_unit" | "kind_label"> | undefined;
   const lastRequest = raw ? withKindInfo(raw) : null;
+  const merged = rows
+    ? mergeThroughputRows(
+        rows.results as unknown as ThroughputRequest[],
+        pending,
+      )
+    : [];
   return {
     lastRequest,
     throughput: rows
-      ? spreadThroughput(
-          mergeThroughputRows(
-            rows.results as unknown as ThroughputRequest[],
-            pending,
-          ),
-          from,
-          to,
-          THROUGHPUT_BUCKET_S,
-        )
+      ? spreadThroughput(merged, from, to, THROUGHPUT_BUCKET_S)
       : [],
+    models: modelActivity(merged, providers, from, to, THROUGHPUT_BUCKET_S),
   };
 }
 

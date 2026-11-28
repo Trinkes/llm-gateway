@@ -19,11 +19,23 @@ function req(over: Partial<ThroughputRequest> = {}): ThroughputRequest {
     decode_ms: 10_000,
     prefill_tokens: 1000,
     tokens_output: 1000,
+    provider: "box",
+    method: "chat",
+    status_code: 200,
+    units: null,
+    tokens_input: 1000,
     ...over,
   };
 }
 
 describe("spreadThroughput", () => {
+  it("ignores failed requests", () => {
+    const failed = req({ status_code: 500, timestamp: 120 });
+    expect(spreadThroughput([req(), failed], 100, 130, 10)).toEqual(
+      spreadThroughput([req()], 100, 130, 10),
+    );
+  });
+
   it("splits prefill and decode of a streamed request", () => {
     const pts = spreadThroughput([req()], 100, 130, 10);
     expect(pts.map((p) => p.ts)).toEqual([100, 110, 120]);
@@ -135,6 +147,12 @@ describe("spreadThroughput", () => {
 });
 
 describe("countRequests", () => {
+  it("ignores failed requests", () => {
+    expect(
+      countRequests([req(), req({ status_code: 500 })], 100, 130, 10),
+    ).toEqual(countRequests([req()], 100, 130, 10));
+  });
+
   it("counts requests overlapping each bucket", () => {
     const counts = countRequests(
       [
@@ -246,7 +264,7 @@ describe("throughputRowsStatement", () => {
       .run();
   }
 
-  it("filters errors, cache hits, other providers, orgs and ranges", async () => {
+  it("filters cache hits, other providers, orgs and ranges, keeping errors", async () => {
     await insert("ok");
     await insert("err", { status: 500 });
     await insert("hit", { cacheHit: 1 });
@@ -260,16 +278,23 @@ describe("throughputRowsStatement", () => {
       ["box"],
       1000,
       2000,
-    ).all();
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({
+    ).all<ThroughputRequest>();
+    expect(results.map((r) => r.id).sort()).toEqual(["err", "ok"]);
+    const ok = results.find((r) => r.id === "ok");
+    expect(ok).toMatchObject({
       timestamp: 1000,
       latency_ms: 1000,
       ttft_ms: 100,
       decode_ms: 900,
       prefill_tokens: 500,
       tokens_output: 50,
+      provider: "box",
+      method: "chat",
+      status_code: 200,
+      units: null,
+      tokens_input: 500,
     });
+    expect(results.find((r) => r.id === "err")?.status_code).toBe(500);
   });
 
   it("stops at to + MAX_REQUEST_S instead of scanning to the present", async () => {
