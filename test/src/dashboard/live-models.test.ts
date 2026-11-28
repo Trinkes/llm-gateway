@@ -108,3 +108,31 @@ describe("modelUsage", () => {
     expect(modelUsage(model({ kind: "speech", unit: null }))).toBe("—");
   });
 });
+
+describe("MODEL_COLORS", () => {
+  function hue(hex: string): number {
+    const [r, g, b] = [1, 3, 5].map(
+      (i) => parseInt(hex.slice(i, i + 2), 16) / 255,
+    );
+    const max = Math.max(r, g, b);
+    const d = max - Math.min(r, g, b);
+    if (d === 0) return 0;
+    const h =
+      max === r
+        ? ((g - b) / d) % 6
+        : max === g
+          ? (b - r) / d + 2
+          : (r - g) / d + 4;
+    return (h * 60 + 360) % 360;
+  }
+
+  it("keeps the first six colours at least 25° apart in hue", () => {
+    const hues = MODEL_COLORS.slice(0, 6).map(hue);
+    for (let i = 0; i < hues.length; i++) {
+      for (let j = i + 1; j < hues.length; j++) {
+        const gap = Math.abs(hues[i] - hues[j]);
+        expect(Math.min(gap, 360 - gap)).toBeGreaterThanOrEqual(25);
+      }
+    }
+  });
+});
