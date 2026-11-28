@@ -8,6 +8,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { EmailPage } from "./pages/EmailPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LivePage } from "./pages/LivePage";
+import { PlaygroundPage } from "./pages/PlaygroundPage";
 import { PowerPage } from "./pages/PowerPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { RequestsPage } from "./pages/RequestsPage";
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/api-keys" element={<ApiKeysPage />} />
           <Route path="/api-keys/:id" element={<ApiKeyDetailPage />} />
+          <Route path="/playground" element={<PlaygroundPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/live" element={<LivePage />} />
           <Route path="/power" element={<PowerPage />} />
