@@ -27,7 +27,18 @@ export function imageSrc(
       IMAGE_MIME[(outputFormat ?? "png").toLowerCase()] ?? "image/png";
     return `data:${mime};base64,${item.b64_json}`;
   }
-  return item.url ?? null;
+  return safeHttpUrl(item.url);
+}
+
+/** `url` when it is http(s); anything else (`javascript:`, `data:`…) is dropped. */
+function safeHttpUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "https:" || protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 /** File extension for a speech `response_format`. */
