@@ -191,6 +191,9 @@ describe("playground file helpers", () => {
     );
     expect(imageSrc({ url: "https://x/y.png" })).toBe("https://x/y.png");
     expect(imageSrc({})).toBeNull();
+    expect(imageSrc({ url: "javascript:alert(1)" })).toBeNull();
+    expect(imageSrc({ url: "data:text/html,<script>x</script>" })).toBeNull();
+    expect(imageSrc({ url: "not a url" })).toBeNull();
   });
 
   it("names opus audio .ogg", () => {

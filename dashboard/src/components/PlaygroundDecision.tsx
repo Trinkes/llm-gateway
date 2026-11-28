@@ -1,4 +1,5 @@
 // [fork] W23: the decision model (`/v1/systemone`) in the playground.
+import { answerProbabilities, answerValue } from "../lib/decisionAnswer";
 import { useGatewayCall } from "../lib/useGatewayCall";
 import { PlaygroundCallMeta } from "./PlaygroundCallMeta";
 import { PlaygroundSettings } from "./PlaygroundSettings";
@@ -99,12 +100,18 @@ export function PlaygroundDecision({ model }: { model: string }) {
               </thead>
               <tbody>
                 {Object.entries(answers).map(([id, a]) => {
-                  const { confidence, ...rest } = a;
+                  const confidence = a.confidence;
+                  const probabilities = answerProbabilities(a);
                   return (
                     <tr key={id} className="border-t border-gray-100">
                       <td className="py-1 pr-2 font-mono text-xs">{id}</td>
                       <td className="py-1 pr-2">
-                        {Object.values(rest).map(String).join(", ")}
+                        <span className="font-medium">{answerValue(a)}</span>
+                        {probabilities && (
+                          <span className="ml-2 text-xs text-gray-500">
+                            {probabilities}
+                          </span>
+                        )}
                       </td>
                       <td className="py-1">
                         {typeof confidence === "number"
