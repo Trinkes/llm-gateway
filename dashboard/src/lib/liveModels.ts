@@ -3,16 +3,20 @@
 import type { ModelActivity } from "./api";
 import { formatUsage } from "./requestKinds";
 
-/** Series colours, assigned by sorted series key so they stay put across polls. */
+/**
+ * Series colours, assigned by sorted series key so they stay put across polls.
+ * The first six are at least 25° apart in hue (six local models today).
+ */
 export const MODEL_COLORS = [
   "#f59e0b",
   "#3b82f6",
   "#10b981",
   "#a855f7",
   "#ef4444",
-  "#14b8a6",
   "#ec4899",
   "#64748b",
+  // Teal last: next to emerald it was hard to tell apart.
+  "#14b8a6",
 ] as const;
 
 /** `provider|kind` (empty kind for an idle provider): the chart's data key. */
