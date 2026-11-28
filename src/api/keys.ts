@@ -13,12 +13,13 @@ import { ApiKeyScopes } from "../types";
 import { effectiveBaseUrl } from "../utils/base-url";
 import { randomBytes, sha256Hex, nowSeconds } from "../utils/crypto";
 import { parseExpiresAt } from "./key-expiry";
+import { isReservedKeyName, PLAYGROUND_KEY_NAME } from "./playground-key-name";
 import { Hono } from "hono";
 
 const KEY_PREFIX = "sk_live_";
 const ID_RE = /^[a-z0-9_]{1,64}$/i;
 
-function generateApiKey(): string {
+export function generateApiKey(): string {
   return `${KEY_PREFIX}${Array.from(randomBytes(32), (b) =>
     b.toString(16).padStart(2, "0"),
   ).join("")}`;
@@ -175,6 +176,10 @@ keysRouter.post("/", async (c) => {
       400,
     );
   }
+  // [fork] W23: reserved for the playground's own key.
+  if (isReservedKeyName(name)) {
+    return c.json({ error: `name '${PLAYGROUND_KEY_NAME}' is reserved` }, 400);
+  }
 
   let scopes: ApiKeyScopes;
   try {
@@ -275,6 +280,13 @@ keysRouter.patch("/:id", async (c) => {
   if (body.name !== undefined) {
     if (typeof body.name !== "string" || body.name.trim().length === 0) {
       return c.json({ error: "name must be a non-empty string" }, 400);
+    }
+    // [fork] W23: reserved for the playground's own key.
+    if (isReservedKeyName(body.name)) {
+      return c.json(
+        { error: `name '${PLAYGROUND_KEY_NAME}' is reserved` },
+        400,
+      );
     }
     sets.push("name = ?");
     params.push(body.name.trim());

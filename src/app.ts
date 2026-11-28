@@ -5,6 +5,7 @@ import { healthRouter } from "./api/health";
 import { keysRouter } from "./api/keys";
 import { liveRouter } from "./api/live";
 import { metricsRouter } from "./api/metrics";
+import { playgroundRouter } from "./api/playground";
 import { powerRouter } from "./api/power";
 import { providerConfigRouter } from "./api/provider-config";
 import { teamRouter } from "./api/team";
@@ -88,6 +89,15 @@ export function createApp(): Hono<AppBindings> {
   );
   app.route("/api/providers", providerConfigRouter);
   app.route("/api/keys", keysRouter);
+  // [fork] W23: the playground issues itself a key, so it is admin-only like
+  // key creation.
+  app.use(
+    "/api/playground/*",
+    sessionAuthMiddleware,
+    requireOrgMember,
+    requireAdmin(),
+  );
+  app.route("/api/playground", playgroundRouter);
 
   // Team management (Phase 2.3): members + invitations. Reads are member+;
   // mutations are owner/admin via adminWriteGuard; owner-only transfers are

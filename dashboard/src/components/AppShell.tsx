@@ -2,6 +2,7 @@ import { authClient } from "@contentgrowth/content-auth";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
+  FlaskConical,
   Boxes,
   Gauge,
   KeyRound,
@@ -38,6 +39,7 @@ const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/providers", label: "Providers", icon: Boxes },
   { to: "/api-keys", label: "API Keys", icon: KeyRound },
+  { to: "/playground", label: "Playground", icon: FlaskConical }, // [fork] W23
   { to: "/analytics", label: "Analytics", icon: Activity },
   { to: "/live", label: "Live", icon: Gauge }, // [fork] W11
   { to: "/power", label: "Power", icon: PlugZap }, // [fork] W13
